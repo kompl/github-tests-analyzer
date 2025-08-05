@@ -16,7 +16,7 @@ MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
 MAX_RUNS = 10  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать zip и HTML
-SAVE_LOGS = False  # Оставлять .zip на диске?
+SAVE_LOGS = True  # Оставлять .zip на диске?
 PATTERNS = [
     re.compile(r"🧪\s*-\s*(.*?)\s*\|"),  # emoji-формат
     re.compile(r"\b(spec[^\s]+?\.rb(?:#L\d+)?)\b", re.I),  # spec/*.rb
@@ -94,16 +94,21 @@ def download_logs_bytes(owner, repo, run_id):
         return None
 
 
-def parse_failed_tests(zip_bytes):
-    """Ищем строки вида  🧪 - spec/... | """
-    failed = set()
+def parse_failed_tests_with_details(zip_bytes):
+    """Ищем строки вида  🧪 - spec/... |  и собираем детали."""
+    failed = {}  # path -> список строк с деталями
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         for name in z.namelist():
             if not name.lower().endswith('.txt'):
                 continue
             with z.open(name) as f:
+                content_lines = []
                 for raw in f:
                     line = raw.decode('utf-8', 'ignore')
+                    content_lines.append(line)
+
+                # Проходим по всем строкам и ищем совпадения
+                for i, line in enumerate(content_lines):
                     for pat in PATTERNS:
                         m = pat.search(line)
                         if m:
@@ -111,8 +116,26 @@ def parse_failed_tests(zip_bytes):
                             # приводим вариант spec.a.b.c.rb → spec/a/b/c.rb
                             if ('/' not in path) and ('.' in path):
                                 path = path.replace('.', '/')
-                            failed.add(path)
+
+                            # Собираем контекст вокруг найденной строки
+                            context_start = max(0, i - 3)
+                            context_end = min(len(content_lines), i + 10)
+                            context = content_lines[context_start:context_end]
+
+                            if path not in failed:
+                                failed[path] = []
+                            failed[path].append({
+                                'file': name,
+                                'line_num': i + 1,
+                                'context': ''.join(context).strip()
+                            })
     return failed
+
+
+def parse_failed_tests(zip_bytes):
+    """Возвращает только set путей для обратной совместимости."""
+    details = parse_failed_tests_with_details(zip_bytes)
+    return set(details.keys())
 
 
 def print_list(items, indent=" • "):
@@ -126,26 +149,38 @@ class HtmlReportBuilder:
     def __init__(self, filename):
         self.filename = filename
         self.sections = []
-        Path(self.filename).parent.mkdir(parents=True, exist_ok=True)  # Создаём директорию, если нет
+        self.test_details = {}  # path -> детали теста
+        Path(self.filename).parent.mkdir(parents=True, exist_ok=True)
+
+    def add_test_details(self, test_details):
+        """Добавляет детали тестов для использования в кнопках."""
+        self.test_details.update(test_details)
 
     def add_section(self, title, items, max_show=10):
         total = len(items)
         sorted_items = sorted(items)
         if total == 0:
             content = f"<p>{title}: нет</p>"
-        elif total <= max_show:
-            content = f"<p>{title} ({total} шт.):</p>\n<ul>" + ''.join(
-                f'<li>{item}</li>' for item in sorted_items) + '</ul>'
         else:
-            teaser = ''.join(f'<li>{item}</li>' for item in sorted_items[:max_show])
-            rest = total - max_show
-            content = f"""
+            # Всегда показываем все тесты в спойлере
+            items_html = []
+            for item in sorted_items:
+                # Убираем дополнительные пометки для создания ID кнопки
+                clean_item = item.split(' (')[0] if ' (' in item else item
+                detail_button = ""
+                if clean_item in self.test_details:
+                    detail_button = f" <button onclick=\"showDetails('{clean_item}')\">Подробно</button>"
+                items_html.append(f'<li>{item}{detail_button}</li>')
+
+            if total <= max_show:
+                content = f"<p>{title} ({total} шт.):</p>\n<ul>" + ''.join(items_html) + '</ul>'
+            else:
+                content = f"""
 <p>{title} ({total} шт.):</p>
 <details>
 <summary>Показать/скрыть список</summary>
 <ul>
-{teaser}
-<li>... и ещё {rest} тестов</li>
+{''.join(items_html)}
 </ul>
 </details>
 """
@@ -153,14 +188,69 @@ class HtmlReportBuilder:
 
     def write(self):
         separator = '\n<hr>\n'
+
+        # Создаем JavaScript для показа деталей
+        details_js = "var testDetails = {\n"
+        for test_path, details in self.test_details.items():
+            details_text = ""
+            for detail in details:
+                details_text += f"Файл: {detail['file']}\\nСтрока: {detail['line_num']}\\n\\nКонтекст:\\n{detail['context']}\\n\\n---\\n\\n"
+            # Экранируем для JavaScript
+            details_text = details_text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r',
+                                                                                                               '\\r')
+            details_js += f"  '{test_path}': '{details_text}',\n"
+        details_js += "};\n"
+
+        details_js += """
+function showDetails(testPath) {
+    var details = testDetails[testPath];
+    if (details) {
+        alert(details);
+    } else {
+        alert('Детали для теста ' + testPath + ' не найдены');
+    }
+}
+"""
+
         html_content = f"""
-    <html>
-    <head><meta charset='utf-8'><title>Отчёт по упавшим тестам</title></head>
-    <body>
-    {separator.join(self.sections)}
-    </body>
-    </html>
-    """
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Отчёт по упавшим тестам</title>
+    <style>
+        button {{
+            background-color: #4CAF50;
+            color: white;
+            padding: 2px 8px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }}
+        button:hover {{
+            background-color: #45a049;
+        }}
+        details {{
+            margin: 10px 0;
+        }}
+        summary {{
+            cursor: pointer;
+            font-weight: bold;
+            padding: 5px;
+            background-color: #f0f0f0;
+            border-radius: 3px;
+        }}
+    </style>
+    <script>
+{details_js}
+    </script>
+</head>
+<body>
+{separator.join(self.sections)}
+</body>
+</html>
+"""
         Path(self.filename).write_text(html_content, encoding='utf-8')
         print(f"✅ Сгенерирован HTML-отчёт: {self.filename}")
 
@@ -193,7 +283,7 @@ def analyse_repo(repo: str):
         return
 
     # --- 3. Обрабатываем каждый run --- #
-    summary, meta = {}, {}  # sha -> set(failed) / мета-инфо
+    summary, meta, all_test_details = {}, {}, {}  # sha -> set(failed) / мета-инфо / детали тестов
     for run in runs:
         sha = run['head_sha']
         title = get_commit_title(OWNER, repo, sha) or sha[:7]
@@ -206,15 +296,23 @@ def analyse_repo(repo: str):
         print(f"🔍 {title} | {branch} | {ts} | Статус: {concl} | {run_link}")
 
         zbytes = download_logs_bytes(OWNER, repo, run['id'])
-        failed = parse_failed_tests(zbytes) if zbytes else set()
+        if zbytes:
+            test_details = parse_failed_tests_with_details(zbytes)
+            failed = set(test_details.keys())
+            all_test_details.update(test_details)
+        else:
+            failed = set()
 
         summary[sha] = failed
         meta[sha] = {'title': title, 'ts': ts, 'concl': concl, 'link': run_link}
 
+    # Добавляем все детали тестов в HTML builder
+    html_builder.add_test_details(all_test_details)
+
     # --- 4. Выводим информацию о самом раннем run (ПОЛНЫЙ СПИСОК В КОНСОЛЬ) --- #
     first_sha = next(iter(summary))
     first_fail = summary[first_sha]
-    print("\n=== 🐞 Тесты, упавшие в самом первом анализируемом запуске ({len(first_fail)} шт.) ===")
+    print(f"\n=== 🐞 Тесты, упавшие в самом первом анализируемом запуске ({len(first_fail)} шт.) ===")
     if first_fail:
         for t in sorted(first_fail):
             marker = "" if BRANCH == MASTER_BRANCH else \
