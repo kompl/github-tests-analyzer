@@ -15,8 +15,8 @@ BRANCH = 'v6.2'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
 MAX_RUNS = 10  # Сколько запусков анализируем
-OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать zip и HTML
-SAVE_LOGS = True  # Оставлять .zip на диске?
+OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
+SAVE_LOGS = True  # Оставлять .txt на диске?
 PATTERNS = [
     re.compile(r"🧪\s*-\s*(.*?)\s*\|"),  # emoji-формат
     re.compile(r"\b(spec[^\s]+?\.rb(?:#L\d+)?)\b", re.I),  # spec/*.rb
@@ -85,10 +85,38 @@ def get_commit_title(owner, repo, sha):
     return github_get(url).json().get('commit', {}).get('message', '').splitlines()[0]
 
 
-def download_logs_bytes(owner, repo, run_id):
+def download_logs_bytes(owner, repo, run_id, save_dir=None, run_prefix=""):
+    """Скачивает логи и опционально сохраняет txt файлы на диск."""
     url = f'https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs'
     try:
-        return github_get(url).content
+        response = github_get(url)
+        zip_bytes = response.content
+
+        # Сохраняем txt файлы, если указана директория
+        if save_dir and SAVE_LOGS:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            saved_count = 0
+
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                for name in z.namelist():
+                    if name.lower().endswith('.txt'):
+                        # Создаём безопасное имя файла
+                        safe_name = name.replace('/', '_').replace('\\', '_')
+                        if run_prefix:
+                            safe_name = f"{run_prefix}_{safe_name}"
+
+                        txt_path = save_dir / safe_name
+
+                        # Извлекаем и сохраняем содержимое
+                        with z.open(name) as f:
+                            content = f.read()
+                            txt_path.write_bytes(content)
+                            saved_count += 1
+
+            if saved_count > 0:
+                print(f"💾 Сохранено {saved_count} txt файлов в {save_dir}")
+
+        return zip_bytes
     except requests.HTTPError as e:
         print(f"⚠ Не могу скачать логи run {run_id}: {e}")
         return None
@@ -261,13 +289,19 @@ def analyse_repo(repo: str):
     print(f"\n================= 📁 Репозиторий: {repo} =================")
     html_builder = HtmlReportBuilder(OUTPUT_DIR / f'failed_tests_{repo}.html')
 
+    # Создаём папку для логов конкретного репозитория
+    logs_dir = OUTPUT_DIR / f'{repo}_logs'
+    if SAVE_LOGS:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
     # --- 1. Собираем падающие тесты в master, если нужно --- #
     master_failed = set()
     if BRANCH != MASTER_BRANCH:
         print(f"📦 Ищем последний завершённый run '{WORKFLOW_FILE}' в '{MASTER_BRANCH}'…")
         master_run = get_latest_completed_run(OWNER, repo, MASTER_BRANCH, WORKFLOW_FILE)
         if master_run:
-            mb_zip = download_logs_bytes(OWNER, repo, master_run['id'])
+            master_save_dir = logs_dir if SAVE_LOGS else None
+            mb_zip = download_logs_bytes(OWNER, repo, master_run['id'], master_save_dir, "master")
             master_failed = parse_failed_tests(mb_zip) if mb_zip else set()
             print(f"✅ В {MASTER_BRANCH} упало {len(master_failed)} тестов.")
         else:
@@ -284,7 +318,7 @@ def analyse_repo(repo: str):
 
     # --- 3. Обрабатываем каждый run --- #
     summary, meta, all_test_details = {}, {}, {}  # sha -> set(failed) / мета-инфо / детали тестов
-    for run in runs:
+    for i, run in enumerate(runs):
         sha = run['head_sha']
         title = get_commit_title(OWNER, repo, sha) or sha[:7]
         branch = run.get('head_branch')
@@ -295,7 +329,11 @@ def analyse_repo(repo: str):
         run_link = f"https://github.com/{OWNER}/{repo}/actions/runs/{run['id']}"
         print(f"🔍 {title} | {branch} | {ts} | Статус: {concl} | {run_link}")
 
-        zbytes = download_logs_bytes(OWNER, repo, run['id'])
+        # Формируем префикс для txt файлов
+        run_prefix = f"run_{i + 1:02d}_{sha[:7]}"
+        save_dir = logs_dir if SAVE_LOGS else None
+
+        zbytes = download_logs_bytes(OWNER, repo, run['id'], save_dir, run_prefix)
         if zbytes:
             test_details = parse_failed_tests_with_details(zbytes)
             failed = set(test_details.keys())
@@ -305,6 +343,14 @@ def analyse_repo(repo: str):
 
         summary[sha] = failed
         meta[sha] = {'title': title, 'ts': ts, 'concl': concl, 'link': run_link}
+
+    # Выводим информацию о сохранённых логах
+    if SAVE_LOGS:
+        saved_logs = list(logs_dir.glob("*.txt"))
+        if saved_logs:
+            print(f"\n💾 Всего сохранено {len(saved_logs)} txt файлов в {logs_dir}")
+        else:
+            print(f"\n⚠ txt файлы не были сохранены в {logs_dir}")
 
     # Добавляем все детали тестов в HTML builder
     html_builder.add_test_details(all_test_details)
@@ -369,6 +415,12 @@ def main():
         print("❌ Переменная окружения GITHUB_TOKEN не задана.")
         return
     OUTPUT_DIR.mkdir(exist_ok=True)
+
+    if SAVE_LOGS:
+        print(f"💾 Режим сохранения txt файлов включён. Папка: {OUTPUT_DIR}")
+    else:
+        print("🗑 Режим сохранения логов отключён (SAVE_LOGS = False)")
+
     for repo in REPOS:
         try:
             analyse_repo(repo)
