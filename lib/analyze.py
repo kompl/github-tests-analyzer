@@ -29,6 +29,8 @@ class GitHubWorkflowAnalyzer:
         self.pattern_test_line = re.compile(r".*?🧪 - (.*?)(?: \| (.*))?$")
         self.pattern_error_line = re.compile(r"##\[error\](.*)$")
         self.pattern_end_group = re.compile(r"##\[endgroup\]")
+        # Ошибка отсутствия результатов тестов
+        self.pattern_no_tests = re.compile(r"No test results found", re.IGNORECASE)
 
     def github_get(self, url: str, **kwargs) -> requests.Response:
         """Выполняет GET запрос к GitHub API с обработкой ошибок."""
@@ -38,12 +40,14 @@ class GitHubWorkflowAnalyzer:
 
     def get_recent_runs(self, repo: str, branch: str, max_runs: int) -> List[Dict]:
         """
-        Возвращает max_runs завершённых (success|failure) workflow-ранов,
-        отсортированных от старого к новому.
+        Возвращает max_runs завершённых (success|failure) workflow-ранов с валидными результатами тестов,
+        отсортированных от нового к старому (в порядке обработки).
         """
         collected = []
         page = 1
         per_page = 100
+
+        print(f"🔍 Ищем до {max_runs} валидных runs для {repo}/{branch}")
 
         while len(collected) < max_runs:
             url = f'https://api.github.com/repos/{self.owner}/{repo}/actions/workflows/{self.workflow_file}/runs'
@@ -53,26 +57,68 @@ class GitHubWorkflowAnalyzer:
                 resp = self.github_get(url, params=params)
                 items = resp.json().get('workflow_runs', [])
                 if not items:
+                    print(f"📄 Страница {page} пуста, завершаем поиск")
                     break
 
                 for run in items:
-                    if run['status'] == 'completed' and run.get('conclusion') in ('success', 'failure'):
-                        collected.append(run)
-                        if len(collected) == max_runs:
-                            break
+                    # Проверяем базовые условия
+                    if run['status'] != 'completed' or run.get('conclusion') not in ('success', 'failure'):
+                        continue
+
+                    print(f"🔍 Проверяем run {run['id']} ({run.get('conclusion')})")
+
+                    # Скачиваем и проверяем логи на наличие результатов тестов
+                    zbytes = self.download_logs(repo, run['id'])
+                    if not zbytes:
+                        print(f"⚠ Не удалось скачать логи для run {run['id']}, пропускаем")
+                        continue
+
+                    # Используем существующий метод для проверки на "No test results found"
+                    if self._has_no_tests_error(zbytes):
+                        print(f"⚠ Run {run['id']} не содержит результатов тестов, пропускаем")
+                        continue
+
+                    # Проверяем наличие секций с результатами тестов
+                    if not self._has_test_results(zbytes):
+                        print(f"⚠ Run {run['id']} не содержит валидных результатов тестов, пропускаем")
+                        continue
+
+                    # Если дошли сюда - run валидный
+                    print(f"✅ Run {run['id']} валидный, добавляем в результат")
+                    collected.append(run)
+
+                    if len(collected) == max_runs:
+                        print(f"🎯 Собрали нужное количество runs: {max_runs}")
+                        break
+
                 page += 1
 
             except requests.RequestException as e:
                 print(f"⚠ Ошибка получения runs для {repo}: {e}")
                 break
-
-        # Сортируем от старых к новым
-        collected.sort(
-            key=lambda x: datetime.fromisoformat(
-                (x.get('run_started_at') or x.get('created_at')).replace('Z', '+00:00')
-            )
-        )
+        collected.reverse()
+        print(f"📊 Найдено {len(collected)} валидных runs")
         return collected
+
+    def _has_test_results(self, zip_bytes: bytes) -> bool:
+        """Возвращает True, если в логах есть валидные результаты тестов."""
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            for name in z.namelist():
+                if not name.lower().endswith('.txt'):
+                    continue
+
+                with z.open(name) as f:
+                    lines = [line.decode('utf-8', errors='ignore').rstrip() for line in f]
+
+                for line in lines:
+                    # Ищем секцию с результатами тестов
+                    if self.pattern_publish_group.search(line):
+                        return True
+                    # Или прямо статистику тестов
+                    if self.pattern_test_results.search(line):
+                        return True
+
+        return False
 
     def get_latest_completed_run(self, repo: str, branch: str) -> Optional[Dict]:
         """Возвращает последний COMPLETED run (success|failure)."""
@@ -257,6 +303,19 @@ class GitHubWorkflowAnalyzer:
 
         return stats
 
+    def _has_no_tests_error(self, zip_bytes: bytes) -> bool:
+        """Возвращает True, если в логах присутствует сообщение об отсутствии результатов тестов."""
+        import zipfile, io
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            for name in z.namelist():
+                if not name.lower().endswith('.txt'):
+                    continue
+                with z.open(name) as f:
+                    for raw in f:
+                        if self.pattern_no_tests.search(raw.decode('utf-8', 'ignore')):
+                            return True
+        return False
+
     def analyze_repo_runs(self, repo: str, branch: str, max_runs: int) -> Tuple[Dict, Dict, Dict]:
         """
         Анализирует последние запуски репозитория.
@@ -287,6 +346,10 @@ class GitHubWorkflowAnalyzer:
 
             # Скачиваем и парсим логи
             zbytes = self.download_logs(repo, run['id'])
+            # Пропускаем run, если логи содержат ошибку "No test results found"
+            if zbytes and self._has_no_tests_error(zbytes):
+                print("⚠ Пропускаем run: нет результатов тестов")
+                continue
             if zbytes:
                 test_details = self.parse_failed_tests_with_details(zbytes)
                 failed = set(test_details.keys())

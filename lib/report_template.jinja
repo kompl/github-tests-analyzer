@@ -191,6 +191,9 @@
             <span class="run-branch">Ветка: <strong>{{ run.commit_info.branch }}</strong></span>
             <span class="run-date">Дата: <strong>{{ run.commit_info.ts }}</strong></span>
             <span class="run-status status-{{ run.commit_info.concl }}">Статус: <strong>{{ run.commit_info.concl }}</strong></span>
+            {% if run.commit_info.failed is defined %}
+            <span class="run-failed">Падает: <strong>{{ run.commit_info.failed }}</strong></span>
+            {% endif %}
             <span class="run-link"><a href="{{ run.commit_info.link }}" target="_blank">🔗 Посмотреть в GitHub</a></span>
         </div>
     </div>

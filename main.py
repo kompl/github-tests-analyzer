@@ -1,194 +1,235 @@
+#!/usr/bin/env python3
 import os
-import re
-import requests
-import zipfile
-import io
 from pathlib import Path
-from datetime import datetime
+from lib.html import HtmlReportBuilder
+from lib.cache import ArtifactCache
+from lib.analyze import GitHubWorkflowAnalyzer, TestAnalysisResults
 
-# Конфигурация
+# ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
-OWNER = 'hydra-billing'
-REPO = 'hoper'  # или 'hydra-server'
-BRANCH = 'v6.2'             # Анализируемая ветка
-MASTER_BRANCH = 'master'      # Для сравнения
-WORKFLOW_FILE = 'ci.yml'      # Только ci.yml
-MAX_RUNS = 10
-SAVE_LOGS = False
-OUTPUT_DIR = Path('downloaded_logs')
+OWNER = 'hydra-billing'  # Организация / пользователь
+REPOS = ['hoper', 'hydra-server']  # <-- список репозиториев
+BRANCH = 'master'  # Анализируемая ветка
+MASTER_BRANCH = 'master'  # Ветка-эталон
+WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
+MAX_RUNS = 2  # Сколько запусков анализируем
+OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
+CACHE_DIR = OUTPUT_DIR / 'cache'  # Директория для кэша артефактов
+SAVE_LOGS = False  # Оставлять .txt на диске?
 
-HEADERS = {
-    'Authorization': f'token {GITHUB_TOKEN}',
-    'Accept': 'application/vnd.github.v3+json'
-}
+# Инициализируем кэш директорию
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_METADATA_FILE = CACHE_DIR / 'metadata.json'
 
-def get_recent_runs(owner, repo, branch, workflow_file, max_runs):
-    runs = []
-    page = 1
-    while len(runs) < max_runs:
-        url = f'https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_file}/runs'
-        params = {'branch': branch, 'per_page': max_runs, 'page': page}
-        resp = requests.get(url, headers=HEADERS, params=params)
-        if resp.status_code != 200:
-            print(f"Ошибка при получении runs: {resp.status_code} - {resp.text}")
-            break
-        items = resp.json().get('workflow_runs', [])
-        if not items:
-            break
-        for run in items:
-            runs.append({
-                'id': run['id'],
-                'sha': run['head_sha'],
-                'timestamp': run.get('run_started_at') or run.get('created_at'),
-                'status': run['status'],
-                'conclusion': run.get('conclusion')
-            })
-            if len(runs) >= max_runs:
-                break
-        page += 1
-    runs.sort(key=lambda x: datetime.fromisoformat(x['timestamp'].replace('Z', '+00:00')))
-    return runs
+# Глобальный объект кэша
+artifact_cache = ArtifactCache(CACHE_DIR, CACHE_METADATA_FILE)
 
-def get_latest_completed_run(owner, repo, branch, workflow_file):
-    url = f'https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_file}/runs'
-    params = {'branch': branch, 'per_page': MAX_RUNS}
-    resp = requests.get(url, headers=HEADERS, params=params)
-    if resp.status_code != 200:
-        print(f"Ошибка при получении runs для ветки {branch}: {resp.status_code} - {resp.text}")
-        return None
-    items = resp.json().get('workflow_runs', [])
-    if not items:
-        return None
 
-    items.sort(key=lambda x: datetime.fromisoformat((x.get('run_started_at') or x.get('created_at')).replace('Z', '+00:00')), reverse=True)
-
-    for run in items:
-        status = run['status']
-        conclusion = run.get('conclusion')
-        if status == 'completed' and conclusion in ['success', 'failure']:
-            print(f"Найден run в '{branch}': ID {run['id']}, status: {status}, conclusion: {conclusion}")
-            return {
-                'id': run['id'],
-                'sha': run['head_sha'],
-                'timestamp': run.get('run_started_at') or run.get('created_at'),
-                'status': status,
-                'conclusion': conclusion
-            }
+def download_logs_bytes(analyzer, repo, run_id, save_dir=None, run_prefix="", run_info=None):
+    """Скачивает логи с использованием кэша и опционально сохраняет txt файлы на диск."""
+    # Проверяем кэш
+    if artifact_cache.has_cached(OWNER, repo, run_id):
+        zip_bytes = artifact_cache.get_cached(OWNER, repo, run_id)
+        if zip_bytes is None:
+            print(f"⚠ Ошибка чтения кэшированного артефакта для run {run_id}")
         else:
-            print(f"Пропущен run ID {run['id']} — статус: {status}, conclusion: {conclusion}")
-    return None
+            # Сохраняем txt файлы, если нужно
+            if save_dir and SAVE_LOGS and zip_bytes:
+                _save_txt_files_from_zip(zip_bytes, save_dir, run_prefix)
+            return zip_bytes
 
-def get_commit_message(owner, repo, sha):
-    url = f'https://api.github.com/repos/{owner}/{repo}/commits/{sha}'
-    resp = requests.get(url, headers=HEADERS)
-    if resp.status_code != 200:
-        print(f"Ошибка при получении коммита {sha}: {resp.status_code} - {resp.text}")
-        return "Недоступно"
-    data = resp.json()
-    return data.get('commit', {}).get('message', '').splitlines()[0]
+    # Скачиваем из API
+    zip_bytes = analyzer.download_logs(repo, run_id)
+    if zip_bytes:
+        print(f"⬇️ Скачиваем новый артефакт для run {run_id}")
 
-def download_logs_bytes(owner, repo, run_id):
-    url = f'https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs'
+        # Сохраняем в кэш
+        cache_stored = artifact_cache.store_artifact(OWNER, repo, run_id, zip_bytes, run_info)
+        if cache_stored:
+            print(f"💾 Артефакт сохранён в кэш для run {run_id}")
+
+        # Сохраняем txt файлы, если указана директория
+        if save_dir and SAVE_LOGS:
+            _save_txt_files_from_zip(zip_bytes, save_dir, run_prefix)
+
+    return zip_bytes
+
+
+def _save_txt_files_from_zip(zip_bytes, save_dir, run_prefix):
+    """Извлекает и сохраняет txt файлы из zip архива."""
+    import zipfile
+    import io
+
+    if not zip_bytes:
+        return 0
+
+    save_dir.mkdir(parents=True, exist_ok=True)
+    saved_count = 0
+
     try:
-        resp = requests.get(url, headers=HEADERS)
-        resp.raise_for_status()
-        return resp.content
-    except requests.exceptions.HTTPError as e:
-        print(f"Ошибка при загрузке логов run {run_id}: {e}")
-        return None
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            for name in z.namelist():
+                if name.lower().endswith('.txt'):
+                    # Создаём безопасное имя файла
+                    safe_name = name.replace('/', '_').replace('\\', '_')
+                    if run_prefix:
+                        safe_name = f"{run_prefix}_{safe_name}"
 
-def save_logs(zip_bytes, sha, run_id):
-    run_dir = OUTPUT_DIR / sha
-    run_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = run_dir / f'logs_{run_id}.zip'
-    with open(zip_path, 'wb') as f:
-        f.write(zip_bytes)
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        z.extractall(path=run_dir)
+                    txt_path = save_dir / safe_name
 
-def parse_failed_tests(zip_bytes):
-    result = set()
-    pattern = re.compile(r'🧪\s*-\s*(.*?)\s*\|')
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        for name in z.namelist():
-            if not name.lower().endswith('.txt'):
-                continue
-            with z.open(name) as f:
-                for raw in f:
-                    line = raw.decode('utf-8', errors='ignore')
-                    match = pattern.search(line)
-                    if match:
-                        result.add(match.group(1).strip())
-    return result
+                    # Извлекаем и сохраняем содержимое
+                    with z.open(name) as f:
+                        content = f.read()
+                        txt_path.write_bytes(content)
+                        saved_count += 1
+
+        if saved_count > 0:
+            print(f"💾 Сохранено {saved_count} txt файлов в {save_dir}")
+    except Exception as e:
+        print(f"⚠ Ошибка сохранения txt файлов: {e}")
+
+    return saved_count
+
+
+def analyse_repo(repo: str):
+    """Анализирует репозиторий с использованием нового анализатора."""
+    print(f"\n================= 📁 Репозиторий: {repo} =================")
+
+    # Инициализируем анализатор и объект результатов
+    analyzer = GitHubWorkflowAnalyzer(GITHUB_TOKEN, OWNER, WORKFLOW_FILE)
+    results = TestAnalysisResults(repo, BRANCH)
+
+    # Создаём HTML builder
+    html_builder = HtmlReportBuilder(OUTPUT_DIR / f'failed_tests_{repo}.html', repo, BRANCH)
+
+    # Создаём папку для логов конкретного репозитория
+    logs_dir = OUTPUT_DIR / f'{repo}_logs'
+    if SAVE_LOGS:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- 1. Получаем падающие тесты в master, если нужно --- #
+    if BRANCH != MASTER_BRANCH:
+        print(f"📦 Ищем последний завершённый run '{WORKFLOW_FILE}' в '{MASTER_BRANCH}'…")
+        master_failed = analyzer.get_master_failed_tests(repo, MASTER_BRANCH)
+        results.set_master_failed(master_failed)
+        print(f"✅ В {MASTER_BRANCH} упало {len(master_failed)} тестов.")
+    else:
+        print("ℹ Анализируется ветка master — сравнение с ней не требуется.")
+
+    # --- 2. Анализируем запуски --- #
+    summary, meta, all_test_details = analyzer.analyze_repo_runs(repo, BRANCH, MAX_RUNS)
+    results.add_run_data(summary, meta, all_test_details)
+
+    if not summary:
+        print("❌ Завершённых запусков нет.")
+        return
+
+    # Добавляем детали тестов в HTML builder
+    html_builder.add_test_details(all_test_details)
+
+    # --- 3. Выводим результаты --- #
+    # Информация о первом запуске
+    first_fail, first_meta = results.get_first_run_failed()
+    print(f"\n=== 🐞 Тесты, упавшие в самом первом анализируемом запуске ({len(first_fail)} шт.) ===")
+    if first_fail:
+        for t in sorted(first_fail):
+            marker = "" if BRANCH == MASTER_BRANCH else \
+                (" (падает и в master)" if t in results.master_failed else " (не падает в master)")
+            print(f" • {t}{marker}")
+    else:
+        print("✔ Падений нет")
+
+    html_builder.add_section("Тесты, упавшие в самом первом анализируемом запуске",
+                             [
+                                 f"{t}{'' if BRANCH == MASTER_BRANCH else ' (падает и в master)' if t in results.master_failed else ' (не падает в master)'}"
+                                 for t in first_fail],
+                             commit_info=first_meta)
+
+    # Дифф по запускам
+    print("\n=== 📊 Изменения падений тестов по последним запускам ===")
+    for diff in results.get_run_diffs():
+        info = diff['meta']
+        added = diff['added']
+        removed = diff['removed']
+        only_here = diff['only_here']
+
+        failed_total = len(diff.get('current', set()))
+        # Добавляем число падений в метаданные, чтобы использовать в HTML-отчёте
+        info['failed'] = failed_total
+        print(f"\n📦 {info['title']} | {info['ts']} | {info['concl']} | failed: {failed_total} | {info['link']}")
+
+        # Начинаем новую секцию run'а в HTML
+        html_builder.start_run_section(info)
+
+        print(f"➕ Новые падения ({len(added)} шт.):" if added else "➕ Новые падения: нет")
+        if added:
+            for t in sorted(added):
+                marker = "" if BRANCH == MASTER_BRANCH else \
+                    (" (также в master)" if t in results.master_failed else " (только здесь)")
+                print(f"    {t}{marker}")
+        html_builder.add_run_section("➕ Новые падения",
+                                     [
+                                         f"{t}{'' if BRANCH == MASTER_BRANCH else ' (также в master)' if t in results.master_failed else ' (только здесь)'}"
+                                         for t in added])
+
+        print(f"✔ Починились ({len(removed)} шт.):" if removed else "✔ Починились: нет")
+        if removed:
+            for t in sorted(removed):
+                print(f"    {t}")
+        html_builder.add_run_section("✔ Починились", removed)
+
+        print(f"⚠ Уникальные падения ({len(only_here)} шт.):" if only_here else "⚠ Уникальные падения: нет")
+        if only_here:
+            for t in sorted(only_here):
+                print(f"    {t}")
+        html_builder.add_run_section("⚠ Уникальные падения", only_here)
+
+    # --- 4. Статистика --- #
+    stats = results.get_statistics()
+    print(f"\n📊 Статистика анализа:")
+    print(f"   Всего запусков: {stats.get('total_runs', 0)}")
+    print(f"   Уникальных падающих тестов: {stats.get('unique_failed_tests', 0)}")
+    if BRANCH != MASTER_BRANCH:
+        print(f"   Падает в master: {stats.get('master_failed_tests', 0)}")
+        print(f"   Новые падения: {stats.get('new_failures', 0)}")
+
+    # --- 5. Генерируем HTML --- #
+    html_builder.write()
+
 
 def main():
     if not GITHUB_TOKEN:
-        print("❌ Ошибка: переменная окружения GITHUB_TOKEN не задана.")
+        print("❌ Переменная окружения GITHUB_TOKEN не задана.")
         return
+    OUTPUT_DIR.mkdir(exist_ok=True)
 
-    print(f"📦 Получение последнего завершённого запуска '{WORKFLOW_FILE}' в ветке '{MASTER_BRANCH}'...")
-    master_run = get_latest_completed_run(OWNER, REPO, MASTER_BRANCH, WORKFLOW_FILE)
-    if master_run:
-        zip_bytes = download_logs_bytes(OWNER, REPO, master_run['id'])
-        master_failed = parse_failed_tests(zip_bytes) if zip_bytes else set()
-        print(f"✅ В master обнаружено {len(master_failed)} падающих тестов.")
+    # Выводим информацию о кэше
+    cache_stats = artifact_cache.get_cache_stats()
+    print(f"📂 Кэш артефактов: {cache_stats['total_cached']} файлов ({cache_stats['total_size_mb']} МБ)")
+    print(f"   Директория: {cache_stats['cache_dir']}")
+
+    # Очищаем потерянные файлы кэша
+    cleaned = artifact_cache.cleanup_orphaned()
+    if cleaned > 0:
+        print(f"🧹 Очищено {cleaned} потерянных файлов кэша")
+
+    if SAVE_LOGS:
+        print(f"💾 Режим сохранения txt файлов включён. Папка: {OUTPUT_DIR}")
     else:
-        print("⚠ Не удалось получить валидный запуск в master — падения отсутствуют.")
-        master_failed = set()
+        print("🗑 Режим сохранения логов отключён (SAVE_LOGS = False)")
 
-    runs = get_recent_runs(OWNER, REPO, BRANCH, WORKFLOW_FILE, MAX_RUNS)
-    if not runs:
-        print(f"❌ Нет запусков '{WORKFLOW_FILE}' в ветке '{BRANCH}'")
-        return
+    for repo in REPOS:
+        try:
+            analyse_repo(repo)
+        except Exception as e:
+            print(f"🔥 Ошибка при обработке {repo}: {e}")
+            raise e
 
-    summary, timestamps, messages, statuses = {}, {}, {}, {}
+    # Показываем финальную статистику кэша
+    final_stats = artifact_cache.get_cache_stats()
+    print(
+        f"\n📊 Финальная статистика кэша: {final_stats['total_cached']} артефактов ({final_stats['total_size_mb']} МБ)")
 
-    for run in runs:
-        rid, sha = run['id'], run['sha']
-        ts = datetime.fromisoformat(run['timestamp'].replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S')
-        status = run['status']
-        conclusion = run.get('conclusion') or '—'
-        msg = get_commit_message(OWNER, REPO, sha)
-        zip_bytes = download_logs_bytes(OWNER, REPO, rid)
-        failed = parse_failed_tests(zip_bytes) if zip_bytes else set()
-
-        summary[sha] = failed
-        timestamps[sha] = ts
-        messages[sha] = msg
-        statuses[sha] = f"{status}/{conclusion}"
-
-        print(f"🔍 Обработка {sha} | Ветка: {BRANCH} | {ts} | {msg} | Статус: {statuses[sha]}")
-
-    prev = set()
-    print("\n=== 📊 Изменения падений тестов по последним запускам ===")
-    for sha, curr in summary.items():
-        added = curr - prev
-        removed = prev - curr
-        print(f"\n📦 Запуск: {sha} | Ветка: {BRANCH} | {timestamps[sha]} | {messages[sha]} | Статус: {statuses[sha]}")
-        if added:
-            print("➕ Новые падения:")
-            for path in sorted(added):
-                marker = " (также падает в master)" if path in master_failed else " (не падает в master)"
-                print(f"    {path}{marker}")
-        else:
-            print("➕ Новые падения: нет")
-
-        if removed:
-            print("✔ Починились:")
-            for path in sorted(removed):
-                print(f"    {path}")
-        else:
-            print("✔ Починились: нет")
-
-        only_here = curr - master_failed
-        if only_here:
-            print("⚠ Уникальные падения в текущей ветке (не падают в master):")
-            for path in sorted(only_here):
-                print(f"    {path}")
-        else:
-            print("⚠ Уникальные падения в текущей ветке: нет")
-
-        prev = curr
 
 if __name__ == '__main__':
     main()
