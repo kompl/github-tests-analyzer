@@ -1,0 +1,7 @@
+downloaded_logs
+.idea
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
