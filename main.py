@@ -8,11 +8,12 @@ from lib.analyze import GitHubWorkflowAnalyzer, TestAnalysisResults
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
-REPOS = ['hoper', 'hydra-server']  # <-- список репозиториев
+REPOS = ['hpd', 'hydra-server', "hydra-core"]  # <-- список репозиториев
+# REPOS = ['hoper', 'hydra-server', "hydra-core"]  # <-- список репозиториев
 BRANCH = 'master'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 2  # Сколько запусков анализируем
+MAX_RUNS = 12  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 CACHE_DIR = OUTPUT_DIR / 'cache'  # Директория для кэша артефактов
 SAVE_LOGS = False  # Оставлять .txt на диске?

@@ -210,7 +210,7 @@
                 {% set clean_item = item.split(' (')[0] if ' (' in item else item %}
                 <li>{{ item }}
                     {% if clean_item in test_details %}
-                    {% set detail_id = "details_" + loop.index|string + "_" + loop.index0|string %}
+                    {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
                     <button onclick="toggleDetails('{{ clean_item }}', '{{ detail_id }}')">Подробно</button>
                     <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
                     {% endif %}
@@ -225,7 +225,7 @@
                     {% set clean_item = item.split(' (')[0] if ' (' in item else item %}
                     <li>{{ item }}
                         {% if clean_item in test_details %}
-                        {% set detail_id = "details_" + loop.index|string + "_" + loop.index0|string %}
+                        {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
                         <button onclick="toggleDetails('{{ clean_item }}', '{{ detail_id }}')">Подробно</button>
                         <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
                         {% endif %}
