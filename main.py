@@ -8,7 +8,7 @@ from lib.analyze import GitHubWorkflowAnalyzer, TestAnalysisResults
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
-REPOS = ['hpd', 'hydra-server', "hydra-core"]  # <-- список репозиториев
+REPOS = ['hamd']  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core"]  # <-- список репозиториев
 BRANCH = 'master'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
