@@ -101,7 +101,8 @@ def analyse_repo(repo: str):
     results = TestAnalysisResults(repo, BRANCH)
 
     # Создаём директорию для текущей ветки и HTML builder так, чтобы отчёты разных веток не перезаписывались
-    branch_output_dir = OUTPUT_DIR / BRANCH.replace('/', '_')  # Заменяем '/' чтобы избежать вложенных директорий в имени файла
+    branch_output_dir = OUTPUT_DIR / BRANCH.replace('/',
+                                                    '_')  # Заменяем '/' чтобы избежать вложенных директорий в имени файла
     branch_output_dir.mkdir(parents=True, exist_ok=True)
     html_builder = HtmlReportBuilder(branch_output_dir / f'failed_tests_{repo}.html', repo, BRANCH)
 
@@ -130,23 +131,55 @@ def analyse_repo(repo: str):
     # Добавляем детали тестов в HTML builder
     html_builder.add_test_details(all_test_details)
 
-    # --- 3. Выводим результаты --- #
-    # Информация о первом запуске
-    # first_fail, first_meta = results.get_first_run_failed()
-    # print(f"\n=== 🐞 Тесты, упавшие в самом первом анализируемом запуске ({len(first_fail)} шт.) ===")
-    # if first_fail:
-    #     for t in sorted(first_fail):
-    #         marker = "" if BRANCH == MASTER_BRANCH else \
-    #             (" (падает и в master)" if t in results.master_failed else " (не падает в master)")
-    #         print(f" • {t}{marker}")
-    # else:
-    #     print("✔ Падений нет")
-    #
-    # html_builder.add_section("Тесты, упавшие в самом первом анализируемом запуске",
-    #                          [
-    #                              f"{t}{'' if BRANCH == MASTER_BRANCH else ' (падает и в master)' if t in results.master_failed else ' (не падает в master)'}"
-    #                              for t in first_fail],
-    #                          commit_info=first_meta)
+    # --- 3. Анализируем поведение тестов --- #
+    behavior_analysis = results.analyze_test_behavior()
+
+    print(f"\n=== 🔍 Анализ поведения тестов в {len(summary)} запусках ===")
+
+    # Стабильно падающие тесты
+    stable_failing = behavior_analysis['stable_failing']
+    print(f"\n🔴 Стабильно падающие тесты ({len(stable_failing)} шт.):")
+    if stable_failing:
+        for test_name, info in stable_failing.items():
+            marker = "" if BRANCH == MASTER_BRANCH else \
+                (" (также в master)" if test_name in results.master_failed else " (только в ветке)")
+            print(f"    • {test_name} (с {info['first_fail_run']}-го запуска){marker}")
+        html_builder.add_section("🔴 Стабильно падающие тесты",
+                                 [
+                                     f"{test}{' (также в master)' if test in results.master_failed else ' (только в ветке)' if BRANCH != MASTER_BRANCH else ''} (с {info['first_fail_run']}-го запуска)"
+                                     for test, info in stable_failing.items()])
+    else:
+        print("    ✅ Нет стабильно падающих тестов")
+        html_builder.add_section("🔴 Стабильно падающие тесты", ["✅ Нет стабильно падающих тестов"])
+
+    # Починенные тесты
+    fixed_tests = behavior_analysis['fixed_tests']
+    print(f"\n✅ Починенные тесты ({len(fixed_tests)} шт.):")
+    if fixed_tests:
+        for test_name, info in fixed_tests.items():
+            print(f"    • {test_name} (последнее падение: {info['failed_runs'][-1]['']}-й запуск)")
+        html_builder.add_section("✅ Починенные тесты",
+                                 [f"{test} (последнее падение: {info['last_fail_run']}-й запуск)"
+                                  for test, info in fixed_tests.items()])
+    else:
+        print("    ❌ Нет починенных тестов")
+        html_builder.add_section("✅ Починенные тесты", ["❌ Нет починенных тестов"])
+
+    # Нестабильные (flaky) тесты
+    flaky_tests = behavior_analysis['flaky_tests']
+    print(f"\n🟡 Нестабильные (flaky) тесты ({len(flaky_tests)} шт.):")
+    if flaky_tests:
+        for test_name, info in flaky_tests.items():
+            pattern = info['pattern']
+            fail_rate = (info['fail_count'] / info['total_runs']) * 100
+            print(f"    • {test_name} (паттерн: {pattern}, падает {fail_rate:.1f}% времени)")
+        html_builder.add_section("🟡 Нестабильные (flaky) тесты",
+                                 [
+                                     f"{test} (паттерн: {info['pattern']}, падает {(info['fail_count'] / info['total_runs']) * 100:.1f}% времени)"
+                                     for test, info in flaky_tests.items()])
+    else:
+        print("    ✅ Нет нестабильных тестов")
+        html_builder.add_section("🟡 Нестабильные (flaky) тесты", ["✅ Нет нестабильных тестов"])
 
     # Дифф по запускам
     print("\n=== 📊 Изменения падений тестов по последним запускам ===")
@@ -195,6 +228,11 @@ def analyse_repo(repo: str):
     if BRANCH != MASTER_BRANCH:
         print(f"   Падает в master: {stats.get('master_failed_tests', 0)}")
         print(f"   Новые падения: {stats.get('new_failures', 0)}")
+
+    # Добавляем статистику поведения тестов
+    print(f"   Стабильно падающие: {len(stable_failing)}")
+    print(f"   Починенные: {len(fixed_tests)}")
+    print(f"   Нестабильные (flaky): {len(flaky_tests)}")
 
     # --- 5. Генерируем HTML --- #
     html_builder.write()

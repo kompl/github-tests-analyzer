@@ -422,15 +422,149 @@ class TestAnalysisResults:
         self.master_failed = master_failed
         print(f"🔧 Установлен список падающих тестов в master: {len(master_failed)} тестов")
 
-    def get_first_run_failed(self) -> Tuple[Set[str], Dict]:
-        """Возвращает падающие тесты и метаданные самого первого запуска."""
-        if not self.summary:
-            return set(), {}
+    def analyze_test_behavior(self) -> Dict[str, Any]:
+        """
+        Анализирует поведение тестов во всех ранах.
 
-        first_sha = next(iter(self.summary))
-        first_failed = self.summary[first_sha]
-        print(f"🎯 Получен первый запуск: {len(first_failed)} падающих тестов")
-        return first_failed, self.meta[first_sha]
+        Returns:
+            Dict с ключами:
+            - stable_failing: Dict[str, Dict] - тесты, которые стабильно падают
+            - fixed_tests: Dict[str, Dict] - тесты, которые починились
+            - flaky_tests: Dict[str, Dict] - тесты, которые то падают, то проходят
+        """
+        if not self.summary:
+            return {'stable_failing': {}, 'fixed_tests': {}, 'flaky_tests': {}}
+
+        # Собираем все уникальные тесты
+        all_tests = set()
+        for failed_set in self.summary.values():
+            all_tests.update(failed_set)
+
+        print(f"🔍 Анализируем поведение {len(all_tests)} уникальных тестов в {len(self.summary)} ранах")
+
+        # Создаем матрицу состояний для каждого теста в каждом ране
+        ordered_shas = list(self.summary.keys())  # Раны уже в хронологическом порядке
+        test_states = {}  # test_name -> [True/False] для каждого рана
+
+        for test in all_tests:
+            states = []
+            for sha in ordered_shas:
+                states.append(test in self.summary[sha])
+            test_states[test] = states
+
+        # Анализируем паттерны
+        stable_failing = {}
+        fixed_tests = {}
+        flaky_tests = {}
+
+        for test, states in test_states.items():
+            behavior = self._analyze_test_pattern(test, states, ordered_shas)
+
+            if behavior['type'] == 'stable_failing':
+                stable_failing[test] = behavior
+            elif behavior['type'] == 'fixed':
+                fixed_tests[test] = behavior
+            elif behavior['type'] == 'flaky':
+                flaky_tests[test] = behavior
+
+        # Логируем результаты
+        print(f"📊 Результаты анализа:")
+        print(f"  🔴 Стабильно падающие: {len(stable_failing)} тестов")
+        print(f"  ✅ Починенные: {len(fixed_tests)} тестов")
+        print(f"  🟡 Нестабильные (flaky): {len(flaky_tests)} тестов")
+
+        return {
+            'stable_failing': stable_failing,
+            'fixed_tests': fixed_tests,
+            'flaky_tests': flaky_tests
+        }
+
+    def _analyze_test_pattern(self, test_name: str, states: List[bool], shas: List[str]) -> Dict[str, Any]:
+        """Анализирует паттерн поведения одного теста."""
+        first_fail_idx = None
+        last_fail_idx = None
+        fail_count = 0
+
+        # Находим первое и последнее падение, считаем общее количество падений
+        for i, is_failed in enumerate(states):
+            if is_failed:
+                if first_fail_idx is None:
+                    first_fail_idx = i
+                last_fail_idx = i
+                fail_count += 1
+
+        if fail_count == 0:
+            # Тест никогда не падал (не должно происходить, так как мы берем только падавшие)
+            return {'type': 'never_failed', 'details': {}}
+
+        total_runs = len(states)
+
+        # Определяем тип поведения
+        if fail_count == 1:
+            # Упал только один раз
+            behavior_type = 'single_failure'
+        elif first_fail_idx == last_fail_idx:
+            # Упал только в одном ране (не должно происходить при fail_count > 1)
+            behavior_type = 'single_failure'
+        elif last_fail_idx == total_runs - 1:
+            # Последнее падение в последнем ране
+            if self._is_stable_failing_from(states, first_fail_idx):
+                behavior_type = 'stable_failing'
+            else:
+                behavior_type = 'flaky'
+        else:
+            # Последнее падение не в последнем ране - значит, тест починился
+            if self._has_flaky_behavior(states):
+                behavior_type = 'flaky'
+            else:
+                behavior_type = 'fixed'
+
+        # Собираем детальную информацию
+        failed_runs = []
+        for i, is_failed in enumerate(states):
+            if is_failed:
+                failed_runs.append({
+                    'sha': shas[i],
+                    'meta': self.meta[shas[i]],
+                    'run_number': i + 1
+                })
+
+        return {
+            'type': behavior_type,
+            'test_name': test_name,
+            'total_runs': total_runs,
+            'fail_count': fail_count,
+            'first_fail_run': first_fail_idx + 1 if first_fail_idx is not None else None,
+            'last_fail_run': last_fail_idx + 1 if last_fail_idx is not None else None,
+            'failed_runs': failed_runs,
+            'pattern': ''.join(['F' if s else 'P' for s in states]),  # F=Failed, P=Passed
+            'details': self.test_details.get(test_name, [])
+        }
+
+    def _is_stable_failing_from(self, states: List[bool], start_idx: int) -> bool:
+        """Проверяет, стабильно ли падает тест начиная с указанного индекса."""
+        if start_idx >= len(states):
+            return False
+
+        # Проверяем, что с момента первого падения тест падает во всех последующих ранах
+        for i in range(start_idx, len(states)):
+            if not states[i]:
+                return False
+        return True
+
+    def _has_flaky_behavior(self, states: List[bool]) -> bool:
+        """Проверяет, есть ли у теста нестабильное поведение (чередование падений и успехов)."""
+        if len(states) < 2:
+            return False
+
+        # Считаем количество переходов между состояниями
+        transitions = 0
+        for i in range(1, len(states)):
+            if states[i] != states[i - 1]:
+                transitions += 1
+
+        # Если больше одного перехода, считаем тест нестабильным
+        return transitions > 2
 
     def get_run_diffs(self) -> List[Dict]:
         """Возвращает список изменений между запусками."""
