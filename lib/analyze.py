@@ -215,8 +215,10 @@ class GitHubWorkflowAnalyzer:
                             if not test_match:
                                 break
 
-                            test_name = test_match.group(1).strip()
+                            test_key = test_match.group(1).strip()
                             description = test_match.group(2).strip() if test_match.group(2) else ''
+
+                            test_name = '.'.join((test_key, description))
                             failed_tests[test_name] = {'description': description, 'details': ''}
                             # print(f"🧪 Найден упавший тест: {test_name}")
                             i += 1

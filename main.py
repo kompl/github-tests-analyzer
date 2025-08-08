@@ -8,8 +8,8 @@ from lib.analyze import GitHubWorkflowAnalyzer, TestAnalysisResults
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
-REPOS = ['hamd']  # <-- список репозиториев
-# REPOS = ['hoper', 'hydra-server', "hydra-core"]  # <-- список репозиториев
+REPOS = ['hupo']  # <-- список репозиториев
+# REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
 BRANCH = 'master'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
@@ -100,8 +100,10 @@ def analyse_repo(repo: str):
     analyzer = GitHubWorkflowAnalyzer(GITHUB_TOKEN, OWNER, WORKFLOW_FILE)
     results = TestAnalysisResults(repo, BRANCH)
 
-    # Создаём HTML builder
-    html_builder = HtmlReportBuilder(OUTPUT_DIR / f'failed_tests_{repo}.html', repo, BRANCH)
+    # Создаём директорию для текущей ветки и HTML builder так, чтобы отчёты разных веток не перезаписывались
+    branch_output_dir = OUTPUT_DIR / BRANCH.replace('/', '_')  # Заменяем '/' чтобы избежать вложенных директорий в имени файла
+    branch_output_dir.mkdir(parents=True, exist_ok=True)
+    html_builder = HtmlReportBuilder(branch_output_dir / f'failed_tests_{repo}.html', repo, BRANCH)
 
     # Создаём папку для логов конкретного репозитория
     logs_dir = OUTPUT_DIR / f'{repo}_logs'
@@ -130,21 +132,21 @@ def analyse_repo(repo: str):
 
     # --- 3. Выводим результаты --- #
     # Информация о первом запуске
-    first_fail, first_meta = results.get_first_run_failed()
-    print(f"\n=== 🐞 Тесты, упавшие в самом первом анализируемом запуске ({len(first_fail)} шт.) ===")
-    if first_fail:
-        for t in sorted(first_fail):
-            marker = "" if BRANCH == MASTER_BRANCH else \
-                (" (падает и в master)" if t in results.master_failed else " (не падает в master)")
-            print(f" • {t}{marker}")
-    else:
-        print("✔ Падений нет")
-
-    html_builder.add_section("Тесты, упавшие в самом первом анализируемом запуске",
-                             [
-                                 f"{t}{'' if BRANCH == MASTER_BRANCH else ' (падает и в master)' if t in results.master_failed else ' (не падает в master)'}"
-                                 for t in first_fail],
-                             commit_info=first_meta)
+    # first_fail, first_meta = results.get_first_run_failed()
+    # print(f"\n=== 🐞 Тесты, упавшие в самом первом анализируемом запуске ({len(first_fail)} шт.) ===")
+    # if first_fail:
+    #     for t in sorted(first_fail):
+    #         marker = "" if BRANCH == MASTER_BRANCH else \
+    #             (" (падает и в master)" if t in results.master_failed else " (не падает в master)")
+    #         print(f" • {t}{marker}")
+    # else:
+    #     print("✔ Падений нет")
+    #
+    # html_builder.add_section("Тесты, упавшие в самом первом анализируемом запуске",
+    #                          [
+    #                              f"{t}{'' if BRANCH == MASTER_BRANCH else ' (падает и в master)' if t in results.master_failed else ' (не падает в master)'}"
+    #                              for t in first_fail],
+    #                          commit_info=first_meta)
 
     # Дифф по запускам
     print("\n=== 📊 Изменения падений тестов по последним запускам ===")
