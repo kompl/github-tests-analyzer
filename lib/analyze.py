@@ -6,15 +6,24 @@ import io
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Set, List, Optional, Tuple, Any
+from .cache import ArtifactCache
 
 
 class GitHubWorkflowAnalyzer:
     """Анализатор GitHub Actions workflows для отслеживания падающих тестов."""
 
-    def __init__(self, github_token: str, owner: str, workflow_file: str = 'ci.yml'):
+    def __init__(self, github_token: str, owner: str, workflow_file: str = 'ci.yml', cache_dir: Optional[Path] = None):
         self.github_token = github_token
         self.owner = owner
         self.workflow_file = workflow_file
+
+        # Инициализируем внутренний кэш артефактов
+        if cache_dir is None:
+            cache_dir = Path('downloaded_logs') / 'cache'
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_metadata_file = cache_dir / 'metadata.json'
+        self.artifact_cache = ArtifactCache(cache_dir, cache_metadata_file)
 
         # Настройка HTTP заголовков
         self.headers = {
@@ -32,6 +41,17 @@ class GitHubWorkflowAnalyzer:
         # Ошибка отсутствия результатов тестов
         self.pattern_no_tests = re.compile(r"No test results found", re.IGNORECASE)
 
+        # Настройки сохранения txt логов
+        self.save_logs = False
+        self.log_save_dir: Optional[Path] = None
+
+    def configure_cache(self, save_logs: bool = False, log_save_dir: Optional[Path] = None):
+        """Конфигурирует сохранение txt-логов (артефакт-кэш задаётся через конструктор)."""
+        self.save_logs = bool(save_logs)
+        self.log_save_dir = log_save_dir
+
+    # --- JSON sidecar теперь обрабатывается в ArtifactCache --- #
+
     def github_get(self, url: str, **kwargs) -> requests.Response:
         """Выполняет GET запрос к GitHub API с обработкой ошибок."""
         response = requests.get(url, headers=self.headers, **kwargs)
@@ -40,8 +60,9 @@ class GitHubWorkflowAnalyzer:
 
     def get_recent_runs(self, repo: str, branch: str, max_runs: int) -> List[Dict]:
         """
-        Возвращает max_runs завершённых (success|failure) workflow-ранов с валидными результатами тестов,
-        отсортированных от нового к старому (в порядке обработки).
+        Возвращает max_runs завершённых (success|failure) workflow-ранов с ВАЛИДНЫМИ результатами тестов,
+        отсортированных от нового к старому (в порядке обработки). Для каждого run выполняется парсинг логов
+        единожды и распарсенные данные прокидываются дальше в поле 'parsed_test_details'.
         """
         collected = []
         page = 1
@@ -67,21 +88,27 @@ class GitHubWorkflowAnalyzer:
 
                     print(f"🔍 Проверяем run {run['id']} ({run.get('conclusion')})")
 
-                    # Скачиваем и проверяем логи на наличие результатов тестов
-                    zbytes = self.download_logs(repo, run['id'])
-                    if not zbytes:
-                        print(f"⚠ Не удалось скачать логи для run {run['id']}, пропускаем")
+                    # Сначала пробуем прочитать sidecar рядом с zip через ArtifactCache
+                    cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, run['id'])
+                    if cached is not None:
+                        details, has_no_tests = cached
+                    else:
+                        # Скачиваем и парсим логи один раз
+                        zbytes = self.download_logs(repo, run['id'])
+                        if not zbytes:
+                            print(f"⚠ Не удалось скачать логи для run {run['id']}, пропускаем")
+                            continue
+                        details, has_no_tests = self.parse_details_and_flags(zbytes)
+                        # Сохраняем sidecar для будущего переиспользования
+                        self.artifact_cache.save_parsed_sidecar(self.owner, repo, run['id'], details, has_no_tests)
+                    if has_no_tests:
+                        print(f"⚠ Run {run['id']} не содержит результатов тестов (No test results), пропускаем")
                         continue
-
-                    # Используем существующий метод для проверки на "No test results found"
-                    if self._has_no_tests_error(zbytes):
-                        print(f"⚠ Run {run['id']} не содержит результатов тестов, пропускаем")
-                        continue
-
-                    # Проверяем наличие секций с результатами тестов
-                    if not self._has_test_results(zbytes):
+                    if not details:
                         print(f"⚠ Run {run['id']} не содержит валидных результатов тестов, пропускаем")
                         continue
+                    # Сохраняем распарсенные детали в объект run, чтобы не парсить повторно позже
+                    run['parsed_test_details'] = details
 
                     # Если дошли сюда - run валидный
                     print(f"✅ Run {run['id']} валидный, добавляем в результат")
@@ -100,25 +127,7 @@ class GitHubWorkflowAnalyzer:
         print(f"📊 Найдено {len(collected)} валидных runs")
         return collected
 
-    def _has_test_results(self, zip_bytes: bytes) -> bool:
-        """Возвращает True, если в логах есть валидные результаты тестов."""
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            for name in z.namelist():
-                if not name.lower().endswith('.txt'):
-                    continue
-
-                with z.open(name) as f:
-                    lines = [line.decode('utf-8', errors='ignore').rstrip() for line in f]
-
-                for line in lines:
-                    # Ищем секцию с результатами тестов
-                    if self.pattern_publish_group.search(line):
-                        return True
-                    # Или прямо статистику тестов
-                    if self.pattern_test_results.search(line):
-                        return True
-
-        return False
+    
 
     def get_latest_completed_run(self, repo: str, branch: str) -> Optional[Dict]:
         """Возвращает последний COMPLETED run (success|failure)."""
@@ -144,12 +153,44 @@ class GitHubWorkflowAnalyzer:
         except requests.RequestException:
             return sha[:7]  # Возвращаем сокращённый SHA в случае ошибки
 
-    def download_logs(self, repo: str, run_id: int) -> Optional[bytes]:
-        """Скачивает логи workflow run'а."""
+    
+
+    def download_logs(self, repo: str, run_id: int, *, save_dir: Optional[Path] = None,
+                      run_prefix: str = "", run_info: Optional[Dict[str, Any]] = None) -> Optional[bytes]:
+        """Скачивает логи workflow run'а с использованием кэша и опциональным сохранением txt."""
+        # 1) Пробуем прочитать из кэша
+        if self.artifact_cache and self.artifact_cache.has_cached(self.owner, repo, run_id):
+            zip_bytes = self.artifact_cache.get_cached(self.owner, repo, run_id)
+            if zip_bytes is None:
+                print(f"⚠ Ошибка чтения кэшированного артефакта для run {run_id}")
+            else:
+                # Сохраняем txt (если включено)
+                effective_dir = save_dir or (self.log_save_dir if self.save_logs else None)
+                if effective_dir is not None and zip_bytes:
+                    saved = self.artifact_cache.save_txt_from_zip(zip_bytes, effective_dir, run_prefix)
+                    if saved:
+                        print(f"💾 Сохранено {saved} txt файлов в {effective_dir}")
+                return zip_bytes
+
+        # 2) Иначе скачиваем из API
         url = f'https://api.github.com/repos/{self.owner}/{repo}/actions/runs/{run_id}/logs'
         try:
             response = self.github_get(url)
-            return response.content
+            zip_bytes = response.content
+            if zip_bytes:
+                print(f"⬇️ Скачиваем новый артефакт для run {run_id}")
+                # Сохраняем в кэш
+                if self.artifact_cache:
+                    stored = self.artifact_cache.store_artifact(self.owner, repo, run_id, zip_bytes, run_info)
+                    if stored:
+                        print(f"💾 Артефакт сохранён в кэш для run {run_id}")
+                # Сохраняем txt (если включено)
+                effective_dir = save_dir or (self.log_save_dir if self.save_logs else None)
+                if effective_dir is not None:
+                    saved = self.artifact_cache.save_txt_from_zip(zip_bytes, effective_dir, run_prefix)
+                    if saved:
+                        print(f"💾 Сохранено {saved} txt файлов в {effective_dir}")
+            return zip_bytes
         except requests.RequestException as e:
             print(f"⚠ Не могу скачать логи run {run_id}: {e}")
             return None
@@ -276,47 +317,107 @@ class GitHubWorkflowAnalyzer:
 
         return failed
 
+    def parse_details_and_flags(self, zip_bytes: bytes) -> Tuple[Dict[str, List[Dict]], bool]:
+        """Парсит zip один раз и возвращает (failed_details, has_no_tests_error).
+
+        - failed_details: как в parse_failed_tests_with_details()
+        - has_no_tests_error: True, если в логах встречено сообщение об отсутствии результатов тестов
+        """
+        failed: Dict[str, List[Dict]] = {}
+        has_no_tests = False
+
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            for name in z.namelist():
+                if not name.lower().endswith('.txt'):
+                    continue
+
+                with z.open(name) as f:
+                    lines = [line.decode('utf-8', errors='ignore').rstrip() for line in f]
+
+                # Быстрый проход на наличие "No test results"
+                for ln in lines:
+                    if self.pattern_no_tests.search(ln):
+                        has_no_tests = True
+                        break
+                if has_no_tests:
+                    break
+
+                i = 0
+                while i < len(lines):
+                    line = lines[i]
+                    if self.pattern_publish_group.search(line):
+                        i += 1
+                        if i >= len(lines):
+                            break
+                        stat_line = lines[i]
+                        stats_match = self.pattern_test_results.search(stat_line)
+                        if not stats_match:
+                            continue
+                        project_name = stats_match.group(1)
+                        failed_count = int(stats_match.group(5))
+                        if failed_count == 0:
+                            # пропускаем до конца группы
+                            while i < len(lines) and not self.pattern_end_group.search(lines[i]):
+                                i += 1
+                            continue
+
+                        failed_tests: Dict[str, Dict[str, str]] = {}
+                        i += 1
+                        while i < len(lines):
+                            test_line = lines[i]
+                            test_match = self.pattern_test_line.match(test_line)
+                            if not test_match:
+                                break
+                            test_key = test_match.group(1).strip()
+                            description = test_match.group(2).strip() if test_match.group(2) else ''
+                            test_name = '.'.join((test_key, description))
+                            failed_tests[test_name] = {'description': description, 'details': ''}
+                            i += 1
+
+                        while i < len(lines):
+                            error_line = lines[i]
+                            if self.pattern_end_group.search(error_line):
+                                break
+                            error_match = self.pattern_error_line.search(error_line)
+                            if error_match:
+                                error_description = error_match.group(1).strip()
+                                details_lines: List[str] = []
+                                i += 1
+                                while i < len(lines):
+                                    next_line = lines[i]
+                                    if (self.pattern_error_line.search(next_line) or
+                                            self.pattern_end_group.search(next_line)):
+                                        break
+                                    details_lines.append(next_line)
+                                    i += 1
+                                details_text = '\n'.join(details_lines).strip()
+                                matched_test = self._match_error_to_test_by_description(
+                                    error_description, failed_tests)
+                                if matched_test:
+                                    failed_tests[matched_test]['details'] += (
+                                        f"\n{error_description}\n{details_text}\n---\n")
+                                continue
+                            i += 1
+
+                        for tname, tdata in failed_tests.items():
+                            if tdata['details'].strip():
+                                if tname not in failed:
+                                    failed[tname] = []
+                                failed[tname].append({
+                                    'file': name,
+                                    'line_num': 0,
+                                    'context': tdata['details'].strip(),
+                                    'project': project_name
+                                })
+                    else:
+                        i += 1
+
+        return failed, has_no_tests
+
     def parse_failed_tests(self, zip_bytes: bytes) -> Set[str]:
         """Возвращает только set путей для обратной совместимости."""
         details = self.parse_failed_tests_with_details(zip_bytes)
         return set(details.keys())
-
-    def get_test_statistics(self, zip_bytes: bytes) -> Dict[str, Dict[str, int]]:
-        """Извлекает статистику тестов из логов."""
-        stats = {}
-
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            for name in z.namelist():
-                if not name.lower().endswith('.txt'):
-                    continue
-
-                with z.open(name) as f:
-                    for raw in f:
-                        line = raw.decode('utf-8', 'ignore')
-                        stats_match = self.pattern_test_results.search(line)
-                        if stats_match:
-                            project_name = stats_match.group(1)
-                            stats[project_name] = {
-                                'total': int(stats_match.group(2)),
-                                'passed': int(stats_match.group(3)),
-                                'skipped': int(stats_match.group(4)),
-                                'failed': int(stats_match.group(5))
-                            }
-
-        return stats
-
-    def _has_no_tests_error(self, zip_bytes: bytes) -> bool:
-        """Возвращает True, если в логах присутствует сообщение об отсутствии результатов тестов."""
-        import zipfile, io
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            for name in z.namelist():
-                if not name.lower().endswith('.txt'):
-                    continue
-                with z.open(name) as f:
-                    for raw in f:
-                        if self.pattern_no_tests.search(raw.decode('utf-8', 'ignore')):
-                            return True
-        return False
 
     def analyze_repo_runs(self, repo: str, branch: str, max_runs: int) -> Tuple[Dict, Dict, Dict]:
         """
@@ -346,18 +447,41 @@ class GitHubWorkflowAnalyzer:
 
             print(f"🔍 {title} | {branch_name} | {ts} | Статус: {concl} | {run_link}")
 
-            # Скачиваем и парсим логи
-            zbytes = self.download_logs(repo, run['id'])
-            # Пропускаем run, если логи содержат ошибку "No test results found"
-            if zbytes and self._has_no_tests_error(zbytes):
-                print("⚠ Пропускаем run: нет результатов тестов")
-                continue
-            if zbytes:
-                test_details = self.parse_failed_tests_with_details(zbytes)
-                failed = set(test_details.keys())
+            # Используем предварительно распарсенные детали, если они есть
+            test_details = run.get('parsed_test_details')
+            if test_details is None:
+                # Сначала пробуем sidecar через ArtifactCache
+                cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, run['id'])
+                if cached is not None:
+                    test_details, has_no_tests = cached
+                    if has_no_tests:
+                        print("⚠ Пропускаем run: нет результатов тестов")
+                        test_details = {}
+                else:
+                    # Фоллбек: один раз парсим, сохраняем sidecar
+                    zbytes = self.download_logs(
+                        repo,
+                        run['id'],
+                        run_info={
+                            'title': title,
+                            'ts': ts,
+                            'concl': concl,
+                            'link': run_link,
+                            'branch': branch_name
+                        }
+                    )
+                    if not zbytes:
+                        test_details = {}
+                    else:
+                        test_details, has_no_tests = self.parse_details_and_flags(zbytes)
+                        self.artifact_cache.save_parsed_sidecar(self.owner, repo, run['id'], test_details, has_no_tests)
+                        if has_no_tests:
+                            print("⚠ Пропускаем run: нет результатов тестов")
+                            test_details = {}
+
+            failed = set(test_details.keys()) if test_details else set()
+            if test_details:
                 all_test_details.update(test_details)
-            else:
-                failed = set()
 
             summary[sha] = failed
             meta[sha] = {
@@ -529,6 +653,22 @@ class TestAnalysisResults:
                     'run_number': i + 1
                 })
 
+        # Ищем ссылку на PR/коммит после последнего упавшего run
+        next_pr_link = None
+        next_commit_info = None
+        if last_fail_idx is not None and last_fail_idx + 1 < total_runs:
+            next_run_sha = shas[last_fail_idx + 1]
+            next_run_meta = self.meta.get(next_run_sha)
+            if next_run_meta:
+                # Берем ссылку на run (который содержит информацию о коммите)
+                next_pr_link = next_run_meta.get('link')
+                next_commit_info = {
+                    'sha': next_run_sha[:7],
+                    'title': next_run_meta.get('title', ''),
+                    'ts': next_run_meta.get('ts', ''),
+                    'link': next_pr_link
+                }
+
         return {
             'type': behavior_type,
             'test_name': test_name,
@@ -538,7 +678,9 @@ class TestAnalysisResults:
             'last_fail_run': last_fail_idx + 1 if last_fail_idx is not None else None,
             'failed_runs': failed_runs,
             'pattern': ''.join(['F' if s else 'P' for s in states]),  # F=Failed, P=Passed
-            'details': self.test_details.get(test_name, [])
+            'details': self.test_details.get(test_name, []),
+            'next_pr_link': next_pr_link,
+            'next_commit_info': next_commit_info
         }
 
     def _is_stable_failing_from(self, states: List[bool], start_idx: int) -> bool:
