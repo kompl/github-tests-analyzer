@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: filedecorator-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    volumes:
+      - ./data/mongo:/data/db
+
+# Подключение из приложения:
+#   MONGO_URI=mongodb://root:example@localhost:27017/?authSource=admin
+# Пример запуска:
+#   docker compose up -d
+# Остановка:
+#   docker compose down

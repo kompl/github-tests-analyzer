@@ -8,9 +8,9 @@ from lib.analyze import TestAnalysisResults
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
-REPOS = ['hupo']  # <-- список репозиториев
+REPOS = ['hupo', 'hoper', 'hydra-server', "hydra-core"]  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
-BRANCH = 'v6.2'  # Анализируемая ветка
+BRANCH = 'v6.0'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
 MAX_RUNS = 130  # Сколько запусков анализируем

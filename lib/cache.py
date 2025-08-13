@@ -1,121 +1,147 @@
 from pathlib import Path
-import json
 from datetime import datetime
 import zipfile
 import io
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-# ---------- КЭШИРОВАНИЕ ---------- #
+try:
+    # Пытаемся импортировать pymongo. В тестах можно передать mongomock.MongoClient через параметр client.
+    from pymongo import MongoClient, ASCENDING
+except Exception:  # pragma: no cover - позволяeт тестировать без установленного pymongo
+    MongoClient = None  # type: ignore
+    ASCENDING = 1  # type: ignore
+
+
+# ---------- ХРАНИЛИЩЕ РЕЗУЛЬТАТОВ ПАРСИНГА В MONGODB ---------- #
 class ArtifactCache:
-    def __init__(self, cache_dir: Union[str, Path], metadata_file: Union[str, Path]) -> None:
-        self.cache_dir: Path = Path(cache_dir)
-        self.metadata_file: Path = Path(metadata_file)
-        self.metadata: Dict[str, Dict[str, Any]] = self._load_metadata()
+    """
+    Хранилище распарсенных результатов тестовых логов в MongoDB.
 
-    def _load_metadata(self) -> Dict[str, Dict[str, Any]]:
-        """Загружает метаданные кэша."""
-        if self.metadata_file.exists():
-            try:
-                with open(self.metadata_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                print(f"⚠ Ошибка загрузки метаданных кэша: {e}")
-        return {}
+    - Не сохраняет zip архивы.
+    - Сохраняет только распарсенные данные: details и флаг has_no_tests.
+    - Разделение по проектам осуществляется полями owner/repo.
 
-    def _save_metadata(self) -> None:
-        """Сохраняет метаданные кэша."""
+    Параметры:
+      mongo_uri: строка подключения к MongoDB. Если не указана, берётся из переменной окружения MONGO_URI
+                 или по умолчанию mongodb://localhost:27017
+      db_name: имя базы данных
+      collection_name: имя коллекции
+      client: готовый MongoClient (в тестах можно передавать mongomock.MongoClient)
+    """
+
+    def __init__(
+        self,
+        mongo_uri: Optional[str] = None,
+        db_name: str = "filedecorator",
+        collection_name: str = "parsed_results",
+        client: Optional[Any] = None,
+    ) -> None:
+        if client is not None:
+            self.client = client
+        else:
+            if MongoClient is None:
+                raise RuntimeError(
+                    "pymongo не установлен и не передан client. Установите pymongo или передайте совместимый клиент."
+                )
+            mongo_uri = mongo_uri or os.getenv("MONGO_URI", "mongodb://localhost:27017")
+            self.client = MongoClient(mongo_uri)
+
+        self.db = self.client[db_name]
+        self.coll = self.db[collection_name]
+        # Уникальный индекс на (owner, repo, run_id)
         try:
-            with open(self.metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(self.metadata, f, indent=2, ensure_ascii=False)
-        except IOError as e:
-            print(f"⚠ Ошибка сохранения метаданных кэша: {e}")
+            self.coll.create_index([("owner", ASCENDING), ("repo", ASCENDING), ("run_id", ASCENDING)], unique=True)
+        except Exception:
+            # В mongomock или при гонках индекс может уже существовать
+            pass
 
-    def _get_cache_key(self, owner: str, repo: str, run_id: int) -> str:
-        """Генерирует ключ кэша."""
-        return f"{owner}_{repo}_{run_id}"
+    # ---------- Утилиты кодирования/декодирования details ---------- #
+    @staticmethod
+    def _encode_details(details: Optional[Dict[str, List[Dict[str, Any]]]]) -> List[Dict[str, Any]]:
+        """
+        Преобразует словарь {test_name: [items]} в список документов для безопасного хранения в MongoDB.
+        Это позволяет хранить ключи с точками, пробелами и любыми символами.
+        """
+        result: List[Dict[str, Any]] = []
+        if not details:
+            return result
+        for test_name, items in details.items():
+            result.append({
+                "test_name": str(test_name),
+                "items": list(items or []),
+            })
+        return result
 
-    def _get_cache_path(self, cache_key: str) -> Path:
-        """Возвращает путь к кэшированному файлу."""
-        return self.cache_dir / f"{cache_key}.zip"
+    @staticmethod
+    def _decode_details(details_list: Optional[List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Обратное преобразование из списка документов в словарь."""
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        if not details_list:
+            return result
+        for rec in details_list:
+            name = rec.get("test_name")
+            items = rec.get("items") or []
+            if name is not None:
+                result[str(name)] = list(items)
+        return result
 
-    def has_cached(self, owner: str, repo: str, run_id: int) -> bool:
-        """Проверяет, есть ли артефакт в кэше."""
-        cache_key = self._get_cache_key(owner, repo, run_id)
-        cache_path = self._get_cache_path(cache_key)
-        return cache_path.exists() and cache_key in self.metadata
-
-    def get_cached(self, owner: str, repo: str, run_id: int) -> Optional[bytes]:
-        """Возвращает кэшированный артефакт."""
-        cache_key = self._get_cache_key(owner, repo, run_id)
-        cache_path = self._get_cache_path(cache_key)
-
-        if cache_path.exists():
-            try:
-                return cache_path.read_bytes()
-            except IOError as e:
-                print(f"⚠ Ошибка чтения кэшированного файла {cache_path}: {e}")
-                return None
-        return None
-
-    def store_artifact(
+    # ---------- Публичные методы ---------- #
+    def save_parsed_sidecar(
         self,
         owner: str,
         repo: str,
         run_id: int,
-        zip_bytes: bytes,
-        run_info: Optional[Dict[str, Any]] = None,
+        details: Optional[Dict[str, List[Dict[str, Any]]]],
+        has_no_tests: bool,
     ) -> bool:
-        """Сохраняет артефакт в кэш."""
-        cache_key = self._get_cache_key(owner, repo, run_id)
-        cache_path = self._get_cache_path(cache_key)
-
+        """
+        Сохраняет распарсенные результаты (details, has_no_tests) в MongoDB.
+        При повторном сохранении — обновляет существующую запись (upsert).
+        """
+        payload = {
+            "schema": 2,  # версия схемы для Mongo-хранения
+            "owner": owner,
+            "repo": repo,
+            "run_id": int(run_id),
+            "created_at": datetime.now().isoformat(),
+            "has_no_tests": bool(has_no_tests),
+            "details_list": self._encode_details(details),
+        }
         try:
-            cache_path.write_bytes(zip_bytes)
-
-            # Обновляем метаданные
-            self.metadata[cache_key] = {
-                'owner': owner,
-                'repo': repo,
-                'run_id': run_id,
-                'cached_at': datetime.now().isoformat(),
-                'size_bytes': len(zip_bytes),
-                'run_info': run_info or {}
-            }
-            self._save_metadata()
-
-            return True
-        except IOError as e:
-            print(f"⚠ Ошибка сохранения в кэш {cache_path}: {e}")
+            res = self.coll.update_one(
+                {"owner": owner, "repo": repo, "run_id": int(run_id)},
+                {"$set": payload},
+                upsert=True,
+            )
+            # acknowledged True почти всегда; учитываем успешность операции
+            return bool(res.acknowledged)
+        except Exception as e:
+            print(f"⚠ Ошибка сохранения результатов в MongoDB: {e}")
             return False
 
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """Возвращает статистику кэша."""
-        total_files = len(self.metadata)
-        total_size = sum(item.get('size_bytes', item.get('size', 0)) for item in self.metadata.values())
+    def load_parsed_sidecar(
+        self,
+        owner: str,
+        repo: str,
+        run_id: int,
+    ) -> Optional[Tuple[Dict[str, List[Dict[str, Any]]], bool]]:
+        """
+        Загружает распарсенные результаты из MongoDB.
+        Возвращает кортеж (details, has_no_tests) или None, если данных нет.
+        """
+        try:
+            doc = self.coll.find_one({"owner": owner, "repo": repo, "run_id": int(run_id)})
+            if not doc:
+                return None
+            details = self._decode_details(doc.get("details_list"))
+            has_no_tests = bool(doc.get("has_no_tests", False))
+            return details, has_no_tests
+        except Exception as e:
+            print(f"⚠ Ошибка загрузки результатов из MongoDB: {e}")
+            return None
 
-        # Проверяем актуальность файлов
-        actual_files = len([p for p in self.cache_dir.glob("*.zip") if p.exists()])
-
-        return {
-            'total_cached': total_files,
-            'actual_files': actual_files,
-            'total_size_mb': round(total_size / (1024 * 1024), 2),
-            'cache_dir': str(self.cache_dir)
-        }
-
-    def cleanup_orphaned(self) -> int:
-        """Удаляет файлы кэша без метаданных."""
-        cleaned = 0
-        for zip_file in self.cache_dir.glob("*.zip"):
-            cache_key = zip_file.stem
-            if cache_key not in self.metadata:
-                try:
-                    zip_file.unlink()
-                    cleaned += 1
-                except OSError:
-                    pass
-        return cleaned
-
+    # ---------- Вспомогательная утилита: сохранить txt из zip на диск (опционально) ---------- #
     def save_txt_from_zip(self, zip_bytes: bytes, save_dir: Union[str, Path], run_prefix: str = "") -> int:
         """Извлекает и сохраняет txt файлы из zip-архива в указанную директорию."""
         if not zip_bytes:
@@ -138,56 +164,3 @@ class ArtifactCache:
         except Exception as e:
             print(f"⚠ Ошибка сохранения txt файлов: {e}")
         return saved_count
-
-    # --- Sidecar JSON рядом с zip: распарсенные детали --- #
-    def _get_parsed_json_path(self, owner: str, repo: str, run_id: int) -> Path:
-        """Возвращает путь к sidecar JSON для распарсенных деталей рядом с zip."""
-        cache_key = self._get_cache_key(owner, repo, run_id)
-        zip_path = self._get_cache_path(cache_key)
-        return zip_path.with_suffix('.parsed.json')
-
-    def load_parsed_sidecar(
-        self, owner: str, repo: str, run_id: int
-    ) -> Optional[Tuple[Dict[str, List[Dict[str, Any]]], bool]]:
-        """Пытается загрузить (details, has_no_tests) из sidecar JSON. Возвращает None при отсутствии/ошибке."""
-        path = self._get_parsed_json_path(owner, repo, run_id)
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding='utf-8'))
-            if not isinstance(data, dict):
-                return None
-            if 'details' not in data or 'has_no_tests' not in data:
-                return None
-            details = data.get('details') or {}
-            has_no_tests = bool(data.get('has_no_tests'))
-            return details, has_no_tests
-        except Exception as e:
-            print(f"⚠ Ошибка загрузки sidecar JSON {path}: {e}")
-            return None
-
-    def save_parsed_sidecar(
-        self,
-        owner: str,
-        repo: str,
-        run_id: int,
-        details: Optional[Dict[str, List[Dict[str, Any]]]],
-        has_no_tests: bool,
-    ) -> bool:
-        """Сохраняет sidecar JSON с распарсенными деталями и флагом no-tests рядом с zip."""
-        path = self._get_parsed_json_path(owner, repo, run_id)
-        try:
-            payload = {
-                'schema': 1,
-                'owner': owner,
-                'repo': repo,
-                'run_id': run_id,
-                'created_at': datetime.now().isoformat(),
-                'has_no_tests': bool(has_no_tests),
-                'details': details or {}
-            }
-            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
-            return True
-        except Exception as e:
-            print(f"⚠ Ошибка сохранения sidecar JSON {path}: {e}")
-            return False
