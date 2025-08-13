@@ -2,17 +2,18 @@
 import os
 from pathlib import Path
 from lib.html import HtmlReportBuilder
-from lib.analyze import GitHubWorkflowAnalyzer, TestAnalysisResults
+from lib.analyzer import GitHubWorkflowAnalyzer
+from lib.analyze import TestAnalysisResults
 
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
 REPOS = ['hupo']  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
-BRANCH = 'fix_tests'  # Анализируемая ветка
+BRANCH = 'v6.2'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 3  # Сколько запусков анализируем
+MAX_RUNS = 130  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
 

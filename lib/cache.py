@@ -3,15 +3,16 @@ import json
 from datetime import datetime
 import zipfile
 import io
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # ---------- КЭШИРОВАНИЕ ---------- #
 class ArtifactCache:
-    def __init__(self, cache_dir, metadata_file):
-        self.cache_dir = Path(cache_dir)
-        self.metadata_file = Path(metadata_file)
-        self.metadata = self._load_metadata()
+    def __init__(self, cache_dir: Union[str, Path], metadata_file: Union[str, Path]) -> None:
+        self.cache_dir: Path = Path(cache_dir)
+        self.metadata_file: Path = Path(metadata_file)
+        self.metadata: Dict[str, Dict[str, Any]] = self._load_metadata()
 
-    def _load_metadata(self):
+    def _load_metadata(self) -> Dict[str, Dict[str, Any]]:
         """Загружает метаданные кэша."""
         if self.metadata_file.exists():
             try:
@@ -21,7 +22,7 @@ class ArtifactCache:
                 print(f"⚠ Ошибка загрузки метаданных кэша: {e}")
         return {}
 
-    def _save_metadata(self):
+    def _save_metadata(self) -> None:
         """Сохраняет метаданные кэша."""
         try:
             with open(self.metadata_file, 'w', encoding='utf-8') as f:
@@ -29,21 +30,21 @@ class ArtifactCache:
         except IOError as e:
             print(f"⚠ Ошибка сохранения метаданных кэша: {e}")
 
-    def _get_cache_key(self, owner, repo, run_id):
+    def _get_cache_key(self, owner: str, repo: str, run_id: int) -> str:
         """Генерирует ключ кэша."""
         return f"{owner}_{repo}_{run_id}"
 
-    def _get_cache_path(self, cache_key):
+    def _get_cache_path(self, cache_key: str) -> Path:
         """Возвращает путь к кэшированному файлу."""
         return self.cache_dir / f"{cache_key}.zip"
 
-    def has_cached(self, owner, repo, run_id):
+    def has_cached(self, owner: str, repo: str, run_id: int) -> bool:
         """Проверяет, есть ли артефакт в кэше."""
         cache_key = self._get_cache_key(owner, repo, run_id)
         cache_path = self._get_cache_path(cache_key)
         return cache_path.exists() and cache_key in self.metadata
 
-    def get_cached(self, owner, repo, run_id):
+    def get_cached(self, owner: str, repo: str, run_id: int) -> Optional[bytes]:
         """Возвращает кэшированный артефакт."""
         cache_key = self._get_cache_key(owner, repo, run_id)
         cache_path = self._get_cache_path(cache_key)
@@ -56,7 +57,14 @@ class ArtifactCache:
                 return None
         return None
 
-    def store_artifact(self, owner, repo, run_id, zip_bytes, run_info=None):
+    def store_artifact(
+        self,
+        owner: str,
+        repo: str,
+        run_id: int,
+        zip_bytes: bytes,
+        run_info: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         """Сохраняет артефакт в кэш."""
         cache_key = self._get_cache_key(owner, repo, run_id)
         cache_path = self._get_cache_path(cache_key)
@@ -80,7 +88,7 @@ class ArtifactCache:
             print(f"⚠ Ошибка сохранения в кэш {cache_path}: {e}")
             return False
 
-    def get_cache_stats(self):
+    def get_cache_stats(self) -> Dict[str, Any]:
         """Возвращает статистику кэша."""
         total_files = len(self.metadata)
         total_size = sum(item.get('size_bytes', item.get('size', 0)) for item in self.metadata.values())
@@ -95,7 +103,7 @@ class ArtifactCache:
             'cache_dir': str(self.cache_dir)
         }
 
-    def cleanup_orphaned(self):
+    def cleanup_orphaned(self) -> int:
         """Удаляет файлы кэша без метаданных."""
         cleaned = 0
         for zip_file in self.cache_dir.glob("*.zip"):
@@ -108,7 +116,7 @@ class ArtifactCache:
                     pass
         return cleaned
 
-    def save_txt_from_zip(self, zip_bytes, save_dir, run_prefix: str = ""):
+    def save_txt_from_zip(self, zip_bytes: bytes, save_dir: Union[str, Path], run_prefix: str = "") -> int:
         """Извлекает и сохраняет txt файлы из zip-архива в указанную директорию."""
         if not zip_bytes:
             return 0
@@ -138,7 +146,9 @@ class ArtifactCache:
         zip_path = self._get_cache_path(cache_key)
         return zip_path.with_suffix('.parsed.json')
 
-    def load_parsed_sidecar(self, owner: str, repo: str, run_id: int):
+    def load_parsed_sidecar(
+        self, owner: str, repo: str, run_id: int
+    ) -> Optional[Tuple[Dict[str, List[Dict[str, Any]]], bool]]:
         """Пытается загрузить (details, has_no_tests) из sidecar JSON. Возвращает None при отсутствии/ошибке."""
         path = self._get_parsed_json_path(owner, repo, run_id)
         if not path.exists():
@@ -156,7 +166,14 @@ class ArtifactCache:
             print(f"⚠ Ошибка загрузки sidecar JSON {path}: {e}")
             return None
 
-    def save_parsed_sidecar(self, owner: str, repo: str, run_id: int, details, has_no_tests: bool) -> bool:
+    def save_parsed_sidecar(
+        self,
+        owner: str,
+        repo: str,
+        run_id: int,
+        details: Optional[Dict[str, List[Dict[str, Any]]]],
+        has_no_tests: bool,
+    ) -> bool:
         """Сохраняет sidecar JSON с распарсенными деталями и флагом no-tests рядом с zip."""
         path = self._get_parsed_json_path(owner, repo, run_id)
         try:
