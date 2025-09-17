@@ -10,12 +10,13 @@ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
 REPOS = ['hupo', 'hoper', 'hydra-server', "hydra-core"]  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
-BRANCH = 'v6.0'  # Анализируемая ветка
+BRANCH = 'master'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 130  # Сколько запусков анализируем
+MAX_RUNS = 100  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
+FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
 
 def analyse_repo(repo: str):
     """Анализирует репозиторий с использованием нового анализатора."""
@@ -36,7 +37,12 @@ def analyse_repo(repo: str):
     if SAVE_LOGS:
         logs_dir.mkdir(parents=True, exist_ok=True)
     # Настраиваем сохранение txt-логов на уровне анализатора
-    analyzer.configure_cache(save_logs=SAVE_LOGS, log_save_dir=logs_dir)
+    # Поддержка ENV переопределения: FORCE_REFRESH_CACHE=1|true|yes|on
+    force_refresh_env = os.getenv('FORCE_REFRESH_CACHE', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    force_refresh = FORCE_REFRESH_CACHE or force_refresh_env
+    analyzer.configure_cache(save_logs=SAVE_LOGS, log_save_dir=logs_dir, force_refresh_cache=force_refresh)
+    if force_refresh:
+        print("🧹 Режим принудительного обновления кэша включён (force_refresh_cache=True)")
 
     # --- Анализ последних запусков без JSON-кэша анализа --- #
     # 1) Список падающих тестов в master (для сравнений)
@@ -177,6 +183,10 @@ def main():
         print(f"💾 Режим сохранения txt файлов включён. Папка: {OUTPUT_DIR}")
     else:
         print("🗑 Режим сохранения логов отключён (SAVE_LOGS = False)")
+    # Сообщаем о режиме инвалидации кэша (по глобальному флагу или ENV)
+    force_refresh_env = os.getenv('FORCE_REFRESH_CACHE', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    if FORCE_REFRESH_CACHE or force_refresh_env:
+        print("🧹 Инвалидация кэша включена (FORCE_REFRESH_CACHE)")
 
     for repo in REPOS:
         try:

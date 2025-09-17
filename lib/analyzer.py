@@ -2,31 +2,24 @@ import re
 import requests
 import zipfile
 import io
+import xml.etree.ElementTree as ET
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Set, List, Optional, Tuple, Any
+from typing import Dict, Set, List, Optional, Tuple, Any, Callable
 from .cache import ArtifactCache
 
 
-class GitHubWorkflowAnalyzer:
-    """Анализатор GitHub Actions workflows для отслеживания падающих тестов."""
+class LogTestResultsExtractor:
+    """Экстрактор результатов тестов из zip-логов GitHub Actions (основной способ).
 
-    def __init__(self, github_token: str, owner: str, workflow_file: str = 'ci.yml', cache_dir: Optional[Path] = None):
-        self.github_token = github_token
-        self.owner = owner
-        self.workflow_file = workflow_file
+    Выполняет парсинг текстовых логов, извлечённых из zip, и строит структуру
+    упавших тестов с деталями. Также умеет скачивать zip логов через переданную
+    функцию скачивания.
+    """
 
-        # Инициализируем хранилище распарсенных данных в MongoDB
-        # Параметр cache_dir сохранён для обратной совместимости, но больше не используется.
-        mongo_uri = os.getenv('MONGO_URI', 'mongodb://root:example@localhost:27017')
-        self.artifact_cache = ArtifactCache(mongo_uri=mongo_uri)
-
-        # Настройка HTTP заголовков
-        self.headers = {
-            'Authorization': f'token {github_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
+    def __init__(self, download_logs_func):
+        self.download_logs_func = download_logs_func
 
         # Регулярные выражения для парсинга логов
         self.pattern_publish_group = re.compile(r"##\[group\]🚀 Publish results")
@@ -38,76 +31,9 @@ class GitHubWorkflowAnalyzer:
         # Ошибка отсутствия результатов тестов
         self.pattern_no_tests = re.compile(r"No test results found", re.IGNORECASE)
 
-        # Настройки сохранения txt логов
-        self.save_logs = False
-        self.log_save_dir: Optional[Path] = None
-
-    def configure_cache(self, save_logs: bool = False, log_save_dir: Optional[Path] = None):
-        """Конфигурирует сохранение txt-логов (артефакт-кэш задаётся через конструктор)."""
-        self.save_logs = bool(save_logs)
-        self.log_save_dir = log_save_dir
-
-    # --- JSON sidecar теперь обрабатывается в ArtifactCache --- #
-
-    def github_get(self, url: str, **kwargs) -> requests.Response:
-        """Выполняет GET запрос к GitHub API с обработкой ошибок."""
-        response = requests.get(url, headers=self.headers, **kwargs)
-        response.raise_for_status()
-        return response
-
-    # --- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ УМЕНЬШЕНИЯ ДУБЛИРОВАНИЯ --- #
-
-    def _effective_save_dir(self, save_dir: Optional[Path]) -> Optional[Path]:
-        """Возвращает итоговую директорию сохранения txt логов с учётом глобальной настройки."""
-        return save_dir or (self.log_save_dir if self.save_logs else None)
-
-    def _maybe_save_txt(self, zip_bytes: Optional[bytes], save_dir: Optional[Path], run_prefix: str) -> None:
-        """При наличии байтов zip и директории пытается извлечь и сохранить txt логи."""
-        effective_dir = self._effective_save_dir(save_dir)
-        if effective_dir is not None and zip_bytes:
-            saved = self.artifact_cache.save_txt_from_zip(zip_bytes, effective_dir, run_prefix)
-            if saved:
-                print(f"💾 Сохранено {saved} txt файлов в {effective_dir}")
-
-    def _load_or_parse_run_details(self, repo: str, run_id: int,
-                                   run_info: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, List[Dict]], bool]:
-        """Пытается загрузить распарсенные детали тестов из sidecar или скачать и распарсить логи.
-
-        Возвращает кортеж (details, has_no_tests), где:
-        - details: Dict[test_name, List[detail]]
-        - has_no_tests: True, если в логах было сообщение об отсутствии результатов тестов
-        """
-        # 1) Пробуем загрузить распарсенные результаты из Mongo через ArtifactCache
-        cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, run_id)
-        if cached is not None:
-            details, has_no_tests = cached
-            return details or {}, has_no_tests
-
-        # 2) Иначе скачиваем и парсим
-        zbytes = self.download_logs(repo, run_id, run_info=run_info)
-        if not zbytes:
-            print(f"⚠ Не удалось получить логи для run {run_id}")
-            return {}, False
-
-        details, has_no_tests = self.parse_details_and_flags(zbytes)
-        # Сохраняем sidecar для будущего переиспользования
-        self.artifact_cache.save_parsed_sidecar(self.owner, repo, run_id, details, has_no_tests)
-        return details or {}, has_no_tests
-
-    # --- Общая логика парсинга zip логов тестов --- #
-
-    def _parse_zip_internal(self, zip_bytes: bytes, *, detect_no_tests: bool, test_name_joiner: str
-                             ) -> Tuple[Dict[str, List[Dict]], bool]:
-        """Единый парсер zip логов.
-
-        Args:
-            zip_bytes: содержимое zip с txt логами.
-            detect_no_tests: искать ли флаг отсутствия результатов тестов и завершать ранний проход.
-            test_name_joiner: разделитель между ключом теста и описанием (например, ' | ' или '.').
-
-        Returns:
-            (failed_details, has_no_tests)
-        """
+    def parse_zip(self, zip_bytes: bytes, *, detect_no_tests: bool = True, test_name_joiner: str = ' | '
+                  ) -> Tuple[Dict[str, List[Dict]], bool]:
+        """Парсит zip логов и возвращает (failed_details, has_no_tests)."""
         failed: Dict[str, List[Dict]] = {}
         has_no_tests = False
 
@@ -212,6 +138,285 @@ class GitHubWorkflowAnalyzer:
 
         return failed, has_no_tests
 
+    def extract(self, repo: str, run_id: int, run_info: Optional[Dict[str, Any]] = None
+                ) -> Tuple[Dict[str, List[Dict]], bool]:
+        """Скачивает и парсит zip логов для указанного run."""
+        zip_bytes = self.download_logs_func(repo, run_id, run_info=run_info)
+        if not zip_bytes:
+            print(f"⚠ Не удалось получить zip логов для run {run_id}")
+            return {}, False
+        return self.parse_zip(zip_bytes, detect_no_tests=True, test_name_joiner=' | ')
+
+
+class ArtifactsTestResultsExtractor:
+    """Экстрактор результатов тестов из артефактов GitHub (JUnit XML).
+
+    Логика:
+    1) Запрашивает список артефактов ранa: /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts
+    2) Фильтрует артефакты с именами, начинающимися на "test-reports-".
+    3) Скачивает zip по archive_download_url для каждого такого артефакта.
+    4) Ищет внутри zip файлы .xml и парсит JUnit testcase с <failure>/<error>.
+    5) Приводит к общему формату: {test_name: [{file, line_num, context, project}, ...]}.
+    """
+
+    def __init__(self, *, github_get_json: Callable[[str], requests.Response],
+                 github_get_zip: Callable[[str], requests.Response], owner: str) -> None:
+        self.github_get_json = github_get_json
+        self.github_get_zip = github_get_zip
+        self.owner = owner
+
+    @staticmethod
+    def _tag_local(tag: str) -> str:
+        return tag.split('}', 1)[-1] if '}' in tag else tag
+
+    def _list_run_artifacts(self, repo: str, run_id: int) -> List[Dict[str, Any]]:
+        url = f'https://api.github.com/repos/{self.owner}/{repo}/actions/runs/{run_id}/artifacts'
+        try:
+            resp = self.github_get_json(url)
+            data = resp.json() or {}
+            return list(data.get('artifacts', []) or [])
+        except requests.RequestException as e:
+            print(f"⚠ Ошибка получения списка артефактов для run {run_id}: {e}")
+            return []
+
+    def _parse_junit_zip(self, zip_bytes: bytes, project_name: str) -> Tuple[Dict[str, List[Dict]], bool]:
+        """Парсит zip с JUnit XML. Возвращает (failed_details, found_any_junit).
+
+        found_any_junit=True, если хотя бы один .xml содержал <testcase>.
+        """
+        failed: Dict[str, List[Dict]] = {}
+        found_any_junit = False
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                for name in z.namelist():
+                    if not name.lower().endswith('.xml'):
+                        continue
+                    try:
+                        with z.open(name) as f:
+                            xml_bytes = f.read()
+                        # Пытаемся распарсить XML
+                        root = ET.fromstring(xml_bytes)
+                    except Exception:
+                        # Не JUnit или повреждённый xml — пропускаем
+                        continue
+
+                    # Ищем testcases по дереву без учёта namespace
+                    has_testcase = False
+                    for tc in root.iter():
+                        if self._tag_local(tc.tag) != 'testcase':
+                            continue
+                        has_testcase = True
+                        classname = (tc.attrib.get('classname') or '').strip()
+                        tname = (tc.attrib.get('name') or '').strip()
+                        if classname and tname:
+                            test_key = f"{classname}::{tname}"
+                        else:
+                            test_key = tname or classname or 'unknown'
+
+                        # Собираем все failure/error для данного testcase
+                        for child in list(tc):
+                            tag = self._tag_local(child.tag)
+                            if tag not in ('failure', 'error'):
+                                continue
+                            message = (child.attrib.get('message') or '').strip()
+                            details_text = (child.text or '').strip()
+                            context = f"\n{message}\n{details_text}\n---\n".strip('\n')
+
+                            # Итоговое имя теста в нашем формате: "key | description"
+                            test_name = f"{test_key} | {message}"
+                            item = {
+                                'file': name,
+                                'line_num': 0,
+                                'context': context,
+                                'project': project_name,
+                            }
+                            failed.setdefault(test_name, []).append(item)
+
+                    if has_testcase:
+                        found_any_junit = True
+        except zipfile.BadZipFile:
+            print("⚠ Повреждённый zip при парсинге junit артефакта")
+        return failed, found_any_junit
+
+    def extract(self, repo: str, run_id: int, run_info: Optional[Dict[str, Any]] = None
+                ) -> Tuple[Dict[str, List[Dict]], bool]:
+        artifacts = self._list_run_artifacts(repo, run_id)
+        if not artifacts:
+            print(f"ℹ️ Для run {run_id} артефактов не найдено")
+            return {}, False
+
+        # Берём все артефакты test-reports-* (не истёкшие)
+        report_artifacts = [a for a in artifacts if str(a.get('name', '')).startswith('test-reports-') and not a.get('expired')]
+        if not report_artifacts:
+            print(f"ℹ️ Для run {run_id} нет артефактов вида 'test-reports-*'")
+            return {}, False
+
+        combined: Dict[str, List[Dict]] = {}
+        found_any_junit = False
+
+        for art in report_artifacts:
+            name = str(art.get('name', ''))
+            project = name[len('test-reports-'):] if name.startswith('test-reports-') else name
+            dl_url = art.get('archive_download_url')
+            if not dl_url:
+                continue
+            try:
+                resp = self.github_get_zip(dl_url)
+                zip_bytes = resp.content
+            except requests.RequestException as e:
+                print(f"⚠ Ошибка скачивания артефакта '{name}' для run {run_id}: {e}")
+                continue
+
+            parsed, has_junit = self._parse_junit_zip(zip_bytes, project)
+            if has_junit:
+                found_any_junit = True
+            if parsed:
+                # Мержим результаты
+                for k, v in parsed.items():
+                    combined.setdefault(k, []).extend(v)
+
+        # Если вообще не нашли junit — трактуем как отсутствие результатов
+        has_no_tests = not found_any_junit
+        if has_no_tests:
+            print(f"⚠ В артефактах run {run_id} не обнаружено JUnit отчётов")
+        return combined, has_no_tests
+
+
+class GitHubWorkflowAnalyzer:
+    """Анализатор GitHub Actions workflows для отслеживания падающих тестов."""
+
+    def __init__(self, github_token: str, owner: str, workflow_file: str = 'ci.yml', cache_dir: Optional[Path] = None):
+        self.github_token = github_token
+        self.owner = owner
+        self.workflow_file = workflow_file
+
+        # Инициализируем хранилище распарсенных данных в MongoDB
+        # Параметр cache_dir сохранён для обратной совместимости, но больше не используется.
+        mongo_uri = os.getenv('MONGO_URI', 'mongodb://root:example@localhost:27017')
+        self.artifact_cache = ArtifactCache(mongo_uri=mongo_uri)
+
+        # Настройка HTTP заголовков
+        self.headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+
+        # Инициализация экстракторов результатов тестов
+        self.log_extractor = LogTestResultsExtractor(download_logs_func=self.download_logs)
+        self.artifacts_extractor = ArtifactsTestResultsExtractor(
+            github_get_json=self.github_get,
+            github_get_zip=self.github_get_zip,
+            owner=self.owner
+        )
+
+        # Настройки сохранения txt логов
+        self.save_logs = False
+        self.log_save_dir: Optional[Path] = None
+        # Флаг: принудительно переизвлекать результаты, игнорируя кэш
+        self.force_refresh_cache: bool = False
+
+    def configure_cache(self, save_logs: bool = False, log_save_dir: Optional[Path] = None,
+                        force_refresh_cache: bool = False):
+        """Конфигурирует поведение кэша и сохранение txt-логов.
+
+        Параметры:
+        - save_logs: сохранять ли txt файлы из zip логов на диск
+        - log_save_dir: директория для сохранения txt
+        - force_refresh_cache: если True — игнорировать записи в кэше и переизвлекать заново
+        """
+        self.save_logs = bool(save_logs)
+        self.log_save_dir = log_save_dir
+        self.force_refresh_cache = bool(force_refresh_cache)
+
+    # --- JSON sidecar теперь обрабатывается в ArtifactCache --- #
+
+    def github_get(self, url: str, **kwargs) -> requests.Response:
+        """Выполняет GET запрос к GitHub API с обработкой ошибок."""
+        response = requests.get(url, headers=self.headers, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def github_get_zip(self, url: str, **kwargs) -> requests.Response:
+        """Выполняет GET запрос к GitHub API для скачивания бинарных артефактов (zip).
+
+        Некоторые эндпоинты (archive_download_url) корректно отдают редирект на S3 при стандартном
+        Accept: application/vnd.github.v3+json. Если сервер отвечает 415/406, пробуем повторить
+        запрос с Accept: application/octet-stream.
+        """
+        try:
+            response = requests.get(url, headers=self.headers, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.HTTPError as e:
+            status = getattr(e.response, 'status_code', None)
+            if status in (415, 406):
+                headers_zip = self.headers.copy()
+                headers_zip['Accept'] = 'application/octet-stream'
+                response = requests.get(url, headers=headers_zip, **kwargs)
+                response.raise_for_status()
+                return response
+            raise
+
+    # --- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ УМЕНЬШЕНИЯ ДУБЛИРОВАНИЯ --- #
+
+    def _effective_save_dir(self, save_dir: Optional[Path]) -> Optional[Path]:
+        """Возвращает итоговую директорию сохранения txt логов с учётом глобальной настройки."""
+        return save_dir or (self.log_save_dir if self.save_logs else None)
+
+    def _maybe_save_txt(self, zip_bytes: Optional[bytes], save_dir: Optional[Path], run_prefix: str) -> None:
+        """При наличии байтов zip и директории пытается извлечь и сохранить txt логи."""
+        effective_dir = self._effective_save_dir(save_dir)
+        if effective_dir is not None and zip_bytes:
+            saved = self.artifact_cache.save_txt_from_zip(zip_bytes, effective_dir, run_prefix)
+            if saved:
+                print(f"💾 Сохранено {saved} txt файлов в {effective_dir}")
+
+    def _load_or_extract_run_details(self, repo: str, run_id: int,
+                                     run_info: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, List[Dict]], bool]:
+        """Пытается загрузить распарсенные детали тестов из sidecar или извлечь их через экстракторы.
+
+        Алгоритм:
+        1) Загрузить кешированные результаты из MongoDB.
+        2) Если в кэше валидно — вернуть. Иначе попробовать снова извлечь: сначала из артефактов,
+           при необходимости fallback на логи.
+        3) Сохранить, что получилось, в MongoDB.
+        """
+        # 1) Кеш
+        if not self.force_refresh_cache:
+            cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, run_id)
+            if cached is not None:
+                details_cached, has_no_tests_cached = cached
+                is_valid_cached = bool(details_cached) and not has_no_tests_cached
+                if is_valid_cached:
+                    return details_cached, has_no_tests_cached
+                else:
+                    print(f"♻️ Кэш для run {run_id} невалиден (пусто или has_no_tests), пробуем переизвлечь…")
+        else:
+            print(f"🧹 Принудительное обновление кэша для run {run_id}: игнорируем сохранённые данные")
+
+        # 2) Основной способ — артефакты
+        details, has_no_tests = self.artifacts_extractor.extract(repo, run_id, run_info=run_info)
+
+        # 2b) Fallback — логи
+        is_valid = bool(details) and not has_no_tests
+        if not is_valid:
+            print(f"🔁 Fallback: пробуем извлечь результаты тестов из логов для run {run_id}")
+            alt_details, alt_has_no_tests = self.log_extractor.extract(repo, run_id, run_info=run_info)
+            if alt_details:
+                details, has_no_tests = alt_details, alt_has_no_tests
+
+        # 3) Сохраняем в Mongo
+        self.artifact_cache.save_parsed_sidecar(self.owner, repo, run_id, details, has_no_tests)
+        return details or {}, has_no_tests
+
+    # --- Общая логика парсинга zip логов тестов --- #
+
+    def _parse_zip_internal(self, zip_bytes: bytes, *, detect_no_tests: bool, test_name_joiner: str
+                             ) -> Tuple[Dict[str, List[Dict]], bool]:
+        """Единый парсер zip логов (делегирует в LogTestResultsExtractor)."""
+        # Делегируем парсинг новому классу-экстрактору
+        return self.log_extractor.parse_zip(zip_bytes, detect_no_tests=detect_no_tests, test_name_joiner=test_name_joiner)
+
     def get_recent_runs(self, repo: str, branch: str, max_runs: int) -> List[Dict]:
         """
         Возвращает max_runs завершённых (success|failure) workflow-ранов с ВАЛИДНЫМИ результатами тестов,
@@ -242,8 +447,8 @@ class GitHubWorkflowAnalyzer:
 
                     print(f"🔍 Проверяем run {run['id']} ({run.get('conclusion')})")
 
-                    # Загружаем или парсим детали единожды через хелпер
-                    details, has_no_tests = self._load_or_parse_run_details(repo, run['id'])
+                    # Загружаем или извлекаем детали единожды через хелпер
+                    details, has_no_tests = self._load_or_extract_run_details(repo, run['id'])
                     if has_no_tests:
                         print(f"⚠ Run {run['id']} не содержит результатов тестов (No test results), пропускаем")
                         continue
@@ -351,7 +556,7 @@ class GitHubWorkflowAnalyzer:
             test_details = run.get('parsed_test_details')
             if test_details is None:
                 # Сначала пробуем получить через единый хелпер
-                test_details, has_no_tests = self._load_or_parse_run_details(
+                test_details, has_no_tests = self._load_or_extract_run_details(
                     repo,
                     run['id'],
                     run_info={
@@ -386,21 +591,8 @@ class GitHubWorkflowAnalyzer:
         master_run = self.get_latest_completed_run(repo, master_branch)
         if not master_run:
             return set()
-        # 1) Сначала пробуем загрузить распарсенные данные из Mongo
-        cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, master_run['id'])
-        if cached is not None:
-            details, has_no_tests = cached
-            if has_no_tests or not details:
-                return set()
-            return set(details.keys())
-        # 2) Если нет — скачиваем и парсим, затем сохраняем в Mongo
-        zbytes = self.download_logs(repo, master_run['id'])
-        if not zbytes:
+        # Используем общий путь с приоритетом артефактов и учётом force_refresh_cache
+        details, has_no_tests = self._load_or_extract_run_details(repo, master_run['id'])
+        if has_no_tests or not details:
             return set()
-        details, _ = self._parse_zip_internal(zbytes, detect_no_tests=False, test_name_joiner=' | ')
-        # Сохраняем в Mongo для будущего использования
-        try:
-            self.artifact_cache.save_parsed_sidecar(self.owner, repo, master_run['id'], details, has_no_tests=False)
-        except Exception:
-            pass
         return set(details.keys())
