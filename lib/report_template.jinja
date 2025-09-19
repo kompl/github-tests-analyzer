@@ -184,7 +184,7 @@
 </div>
 
 {% for run in runs %}
-<div class="run-section">
+<div class="run-section" {% if run.commit_info.sha is defined %}id="run-{{ run.commit_info.sha }}"{% endif %}>
     <div class="run-header">
         <h3>🚀 {{ run.commit_info.title }}</h3>
         <div class="run-meta">
@@ -208,10 +208,10 @@
             <ul class="test-list">
                 {% for item in section.tests %}
                 {% set clean_item = item.split(' (')[0] if ' (' in item else item %}
-                <li>{{ item }}
+                <li>{{ item | safe }}
                     {% if clean_item in test_details %}
                     {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
-                    <button onclick="toggleDetails('{{ clean_item }}', '{{ detail_id }}')">Подробно</button>
+                    <button data-test="{{ clean_item | e }}" onclick="toggleDetails(this.dataset.test, '{{ detail_id }}')">Подробно</button>
                     <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
                     {% endif %}
                 </li>
@@ -223,10 +223,10 @@
                 <ul class="test-list">
                     {% for item in section.tests %}
                     {% set clean_item = item.split(' (')[0] if ' (' in item else item %}
-                    <li>{{ item }}
+                    <li>{{ item | safe }}
                         {% if clean_item in test_details %}
                         {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
-                        <button onclick="toggleDetails('{{ clean_item }}', '{{ detail_id }}')">Подробно</button>
+                        <button data-test="{{ clean_item | e }}" onclick="toggleDetails(this.dataset.test, '{{ detail_id }}')">Подробно</button>
                         <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
                         {% endif %}
                     </li>
@@ -243,11 +243,7 @@
 {% endfor %}
 
 <script>
-var testDetails = {
-    {% for path, text in details_js_data.items() %}
-    '{{ path }}': '{{ text }}',
-    {% endfor %}
-};
+var testDetails = {{ details_js_json | safe }};
 
 function toggleDetails(testPath, detailId) {
     var detailDiv = document.getElementById(detailId);
@@ -263,6 +259,13 @@ function toggleDetails(testPath, detailId) {
         }
     } else {
         detailDiv.style.display = 'none';
+    }
+}
+
+function scrollToRun(runId) {
+    var el = document.getElementById(runId);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 </script>

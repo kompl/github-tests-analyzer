@@ -4,16 +4,17 @@ from pathlib import Path
 from lib.html import HtmlReportBuilder
 from lib.analyzer import GitHubWorkflowAnalyzer
 from lib.analyze import TestAnalysisResults
+import html
 
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
-REPOS = ['hupo', 'hoper', 'hydra-server', "hydra-core"]  # <-- список репозиториев
+REPOS = ['hoper']  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
-BRANCH = 'master'  # Анализируемая ветка
+BRANCH = 'fix_features'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 100  # Сколько запусков анализируем
+MAX_RUNS = 15  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
 FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
@@ -75,14 +76,25 @@ def analyse_repo(repo: str):
     stable_failing = behavior_analysis['stable_failing']
     print(f"\n🔴 Стабильно падающие тесты ({len(stable_failing)} шт.):")
     if stable_failing:
+        stable_items = []
         for test_name, info in stable_failing.items():
-            marker = "" if BRANCH == MASTER_BRANCH else \
-                (" (также в master)" if test_name in results.master_failed else " (только в ветке)")
-            print(f"    • {test_name} (с {info['first_fail_run']}-го запуска){marker}")
-        html_builder.add_section("🔴 Стабильно падающие тесты",
-                                 [
-                                     f"{test}{' (также в master)' if test in results.master_failed else ' (только в ветке)' if BRANCH != MASTER_BRANCH else ''} (с {info['first_fail_run']}-го запуска)"
-                                     for test, info in stable_failing.items()])
+            marker = "" if BRANCH == MASTER_BRANCH else (
+                " (также в master)" if test_name in results.master_failed else " (только в ветке)"
+            )
+            first_fail = (info.get('failed_runs') or [{}])[0]
+            first_meta = first_fail.get('meta', {})
+            first_sha_full = first_fail.get('sha', '')
+            ts = first_meta.get('ts', '')
+            title = first_meta.get('title', '')
+            # Вывод в консоль с датой/временем и заголовком коммита
+            print(f"    • {test_name} — с {ts} — {title}{marker}")
+            # HTML элемент списка с кнопкой скролла к соответствующему run
+            run_anchor_id = f"run-{first_sha_full}" if first_sha_full else ""
+            label_text = f"{test_name}{marker} — с {ts} — {title}"
+            label_safe = html.escape(label_text)
+            button_html = f" <button onclick=\"scrollToRun('{run_anchor_id}')\">К запуску</button>" if run_anchor_id else ""
+            stable_items.append(label_safe + button_html)
+        html_builder.add_section("🔴 Стабильно падающие тесты", stable_items)
     else:
         print("    ✅ Нет стабильно падающих тестов")
         html_builder.add_section("🔴 Стабильно падающие тесты", ["✅ Нет стабильно падающих тестов"])
@@ -127,6 +139,8 @@ def analyse_repo(repo: str):
         failed_total = len(diff.get('current', set()))
         # Добавляем число падений в метаданные, чтобы использовать в HTML-отчёте
         info['failed'] = failed_total
+        # Прокидываем sha для привязки якорей секций run'ов
+        info['sha'] = diff['sha']
         print(f"\n📦 {info['title']} | {info['ts']} | {info['concl']} | failed: {failed_total} | {info['link']}")
 
         # Начинаем новую секцию run'а в HTML

@@ -3,6 +3,7 @@ from jinja2 import Environment, FileSystemLoader, Template
 from pathlib import Path
 from datetime import datetime
 import os
+import json
 
 class HtmlReportBuilder:
     def __init__(
@@ -81,8 +82,11 @@ class HtmlReportBuilder:
             details_text = ""
             for detail in details:
                 details_text += f"Файл: {detail['file']}\nСтрока: {detail['line_num']}\n\nКонтекст:\n{detail['context']}\n\n---\n\n"
-            details_text = details_text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
             details_js_data[test_path] = details_text
+        # Сериализуем в JSON заранее, чтобы безопасно вставить в шаблон
+        details_js_json: str = json.dumps(details_js_data, ensure_ascii=False)
+        # Защита от преждевременного закрытия <script> при наличии "</script>" в тексте
+        details_js_json_safe: str = details_js_json.replace('</', '<\\/')
 
         template_dir: str = os.path.dirname(os.path.abspath(__file__))  # Директория скрипта
         env: Environment = Environment(loader=FileSystemLoader(template_dir))
@@ -99,7 +103,8 @@ class HtmlReportBuilder:
             cache_stats=cache_stats,
             runs=self.runs,
             test_details=self.test_details,  # Для проверки в шаблоне
-            details_js_data=details_js_data
+            details_js_data=details_js_data,
+            details_js_json=details_js_json_safe
         )
 
         Path(self.filename).write_text(html_content, encoding='utf-8')

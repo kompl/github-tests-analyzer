@@ -386,9 +386,11 @@ class GitHubWorkflowAnalyzer:
             cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, run_id)
             if cached is not None:
                 details_cached, has_no_tests_cached = cached
-                is_valid_cached = bool(details_cached) and not has_no_tests_cached
+                # Валидно, если есть JUnit/результаты (has_no_tests=False), даже если падений нет
+                # или если есть детали падений.
+                is_valid_cached = (not has_no_tests_cached) or bool(details_cached)
                 if is_valid_cached:
-                    return details_cached, has_no_tests_cached
+                    return details_cached or {}, has_no_tests_cached
                 else:
                     print(f"♻️ Кэш для run {run_id} невалиден (пусто или has_no_tests), пробуем переизвлечь…")
         else:
@@ -398,11 +400,14 @@ class GitHubWorkflowAnalyzer:
         details, has_no_tests = self.artifacts_extractor.extract(repo, run_id, run_info=run_info)
 
         # 2b) Fallback — логи
-        is_valid = bool(details) and not has_no_tests
+        # Валидно, если JUnit найден (has_no_tests=False), даже когда падений нет.
+        is_valid = (not has_no_tests) or bool(details)
         if not is_valid:
             print(f"🔁 Fallback: пробуем извлечь результаты тестов из логов для run {run_id}")
             alt_details, alt_has_no_tests = self.log_extractor.extract(repo, run_id, run_info=run_info)
-            if alt_details:
+            # Принимаем результаты логов, если там обнаружены тесты (alt_has_no_tests == False),
+            # даже если падений нет (alt_details пустой)
+            if not alt_has_no_tests:
                 details, has_no_tests = alt_details, alt_has_no_tests
 
         # 3) Сохраняем в Mongo
@@ -452,13 +457,11 @@ class GitHubWorkflowAnalyzer:
                     if has_no_tests:
                         print(f"⚠ Run {run['id']} не содержит результатов тестов (No test results), пропускаем")
                         continue
-                    if not details:
-                        print(f"⚠ Run {run['id']} не содержит валидных результатов тестов, пропускаем")
-                        continue
                     # Сохраняем распарсенные детали в объект run, чтобы не парсить повторно позже
-                    run['parsed_test_details'] = details
+                    # Даже если details пустой, это валидное состояние (все тесты прошли).
+                    run['parsed_test_details'] = details or {}
 
-                    # Если дошли сюда - run валидный
+                    # Если дошли сюда - run валидный (даже при отсутствии падений)
                     print(f"✅ Run {run['id']} валидный, добавляем в результат")
                     collected.append(run)
 
