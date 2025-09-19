@@ -36,6 +36,8 @@ class LogTestResultsExtractor:
         """Парсит zip логов и возвращает (failed_details, has_no_tests)."""
         failed: Dict[str, List[Dict]] = {}
         has_no_tests = False
+        # Глобальный счётчик порядка для всего zip логов
+        order_pos = 0
 
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
             for name in z.namelist():
@@ -78,7 +80,7 @@ class LogTestResultsExtractor:
                             continue
 
                         # Собираем упавшие тесты (строки с 🧪)
-                        failed_tests: List[Tuple[str, Dict[str, str]]] = []
+                        failed_tests: List[Tuple[str, Dict[str, Any]]] = []
                         i += 1
                         while i < len(lines):
                             test_line = lines[i]
@@ -91,7 +93,8 @@ class LogTestResultsExtractor:
 
                             # Воссоздаём прежнее поведение: всегда join из двух частей, даже если description пустой
                             test_name = test_name_joiner.join((test_key, description))
-                            failed_tests.append((test_name, {'description': description, 'details': ''}))
+                            failed_tests.append((test_name, {'description': description, 'details': '', 'order_index': order_pos}))
+                            order_pos += 1
                             i += 1
 
                         # Собираем секции ошибок (##[error])
@@ -131,7 +134,8 @@ class LogTestResultsExtractor:
                                     'file': name,
                                     'line_num': 0,
                                     'context': tdata['details'].strip(),
-                                    'project': project_name
+                                    'project': project_name,
+                                    'order_index': tdata.get('order_index')
                                 })
                     else:
                         i += 1
@@ -186,6 +190,9 @@ class ArtifactsTestResultsExtractor:
         """
         failed: Dict[str, List[Dict]] = {}
         found_any_junit = False
+        # Локальный порядок появления testcases внутри данного zip (по test_key, без message)
+        seen_tc_order: Dict[str, int] = {}
+        local_pos = 0
         try:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
                 for name in z.namelist():
@@ -213,6 +220,11 @@ class ArtifactsTestResultsExtractor:
                         else:
                             test_key = tname or classname or 'unknown'
 
+                        # Фиксируем порядок test_key сразу при встрече testcase
+                        if test_key not in seen_tc_order:
+                            seen_tc_order[test_key] = local_pos
+                            local_pos += 1
+
                         # Собираем все failure/error для данного testcase
                         for child in list(tc):
                             tag = self._tag_local(child.tag)
@@ -229,6 +241,8 @@ class ArtifactsTestResultsExtractor:
                                 'line_num': 0,
                                 'context': context,
                                 'project': project_name,
+                                # Порядок по test_key, а не по конкретному сообщению
+                                'order_index': seen_tc_order.get(test_key, 10**9),
                             }
                             failed.setdefault(test_name, []).append(item)
 
@@ -253,6 +267,9 @@ class ArtifactsTestResultsExtractor:
 
         combined: Dict[str, List[Dict]] = {}
         found_any_junit = False
+        # Глобальный порядок тестов для всего run (по мере обхода артефактов и их содержимого)
+        global_pos = 0
+        first_seen_order: Dict[str, int] = {}
 
         for art in report_artifacts:
             name = str(art.get('name', ''))
@@ -271,8 +288,11 @@ class ArtifactsTestResultsExtractor:
             if has_junit:
                 found_any_junit = True
             if parsed:
-                # Мержим результаты
+                # Мержим результаты без перезаписи order_index — он уже отражает порядок testcases
                 for k, v in parsed.items():
+                    if k not in first_seen_order:
+                        first_seen_order[k] = global_pos
+                        global_pos += 1
                     combined.setdefault(k, []).extend(v)
 
         # Если вообще не нашли junit — трактуем как отсутствие результатов

@@ -17,7 +17,7 @@ WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
 MAX_RUNS = 25  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
-FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
+FORCE_REFRESH_CACHE = True  # Принудительно игнорировать кэш и переизвлекать результаты
 
 def analyse_repo(repo: str):
     """Анализирует репозиторий с использованием нового анализатора."""
@@ -80,7 +80,7 @@ def analyse_repo(repo: str):
     behavior_map = {**stable_failing, **fixed_tests, **flaky_tests}
     print(f"\n🔴 Стабильно падающие тесты ({len(stable_failing)} шт.):")
     if stable_failing:
-        stable_items = []
+        stable_with_pos = []  # (pos, display_raw_dict)
         for test_name, info in stable_failing.items():
             marker = "" if BRANCH == MASTER_BRANCH else (
                 " (также в master)" if test_name in results.master_failed else " (только в ветке)"
@@ -99,7 +99,18 @@ def analyse_repo(repo: str):
             label_text = f"{leaf_name}{marker} — с {ts} — {title}"
             label_safe = html.escape(label_text)
             button_html = f" <button onclick=\"scrollToRun('{run_anchor_id}')\">К запуску</button>" if run_anchor_id else ""
-            stable_items.append({'display': label_safe + button_html, 'raw': test_name})
+            item_obj = {'display': label_safe + button_html, 'raw': test_name}
+            # Позиция теста в порядке самого первого упавшего run
+            pos = 10**9
+            order_list = results.meta.get(first_sha_full, {}).get('order', [])
+            if order_list and test_name in order_list:
+                try:
+                    pos = order_list.index(test_name)
+                except ValueError:
+                    pos = 10**9
+            stable_with_pos.append((pos, item_obj))
+        stable_with_pos.sort(key=lambda x: x[0])
+        stable_items = [obj for _, obj in stable_with_pos]
         html_builder.add_section("🔴 Стабильно падающие тесты", stable_items)
     else:
         print("    ✅ Нет стабильно падающих тестов")
