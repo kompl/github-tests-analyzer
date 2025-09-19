@@ -183,6 +183,32 @@
     <p><strong>Кэш:</strong> {{ cache_stats.total_cached }} артефактов ({{ cache_stats.total_size_mb }} МБ)</p>
 </div>
 
+{% macro render_tree(nodes) -%}
+<ul class="test-list test-tree">
+    {% for node in nodes %}
+    <li>
+        <strong>{{ node.name | e }}</strong> <span style="color:#666;">({{ node.total }})</span>
+        {% if node.children %}
+            {{ render_tree(node.children) }}
+        {% endif %}
+        {% if node.leaves %}
+        <ul class="test-list">
+            {% for leaf in node.leaves %}
+            <li>{{ leaf.item | safe }}
+                {% if leaf.clean_item in test_details %}
+                {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
+                <button data-test="{{ leaf.clean_item | e }}" onclick="toggleDetails(this.dataset.test, '{{ detail_id }}')">Подробно</button>
+                <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{%- endmacro %}
+
 {% for run in runs %}
 <div class="run-section" {% if run.commit_info.sha is defined %}id="run-{{ run.commit_info.sha }}"{% endif %}>
     <div class="run-header">
@@ -205,33 +231,11 @@
             <p class="no-tests">нет</p>
             {% else %}
             {% if section.total <= section.max_show %}
-            <ul class="test-list">
-                {% for item in section.tests %}
-                {% set clean_item = item.split(' (')[0] if ' (' in item else item %}
-                <li>{{ item | safe }}
-                    {% if clean_item in test_details %}
-                    {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
-                    <button data-test="{{ clean_item | e }}" onclick="toggleDetails(this.dataset.test, '{{ detail_id }}')">Подробно</button>
-                    <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
-                    {% endif %}
-                </li>
-                {% endfor %}
-            </ul>
+            {{ render_tree(section.tree) }}
             {% else %}
             <details>
                 <summary>Показать/скрыть список</summary>
-                <ul class="test-list">
-                    {% for item in section.tests %}
-                    {% set clean_item = item.split(' (')[0] if ' (' in item else item %}
-                    <li>{{ item | safe }}
-                        {% if clean_item in test_details %}
-                        {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
-                        <button data-test="{{ clean_item | e }}" onclick="toggleDetails(this.dataset.test, '{{ detail_id }}')">Подробно</button>
-                        <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
-                        {% endif %}
-                    </li>
-                    {% endfor %}
-                </ul>
+                {{ render_tree(section.tree) }}
             </details>
             {% endif %}
             {% endif %}

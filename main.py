@@ -14,7 +14,7 @@ REPOS = ['hoper']  # <-- список репозиториев
 BRANCH = 'fix_features'  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 15  # Сколько запусков анализируем
+MAX_RUNS = 25  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
 FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
@@ -74,6 +74,10 @@ def analyse_repo(repo: str):
 
     # Стабильно падающие тесты
     stable_failing = behavior_analysis['stable_failing']
+    fixed_tests = behavior_analysis['fixed_tests']
+    flaky_tests = behavior_analysis['flaky_tests']
+    # Быстрый доступ к информации о тесте по имени
+    behavior_map = {**stable_failing, **fixed_tests, **flaky_tests}
     print(f"\n🔴 Стабильно падающие тесты ({len(stable_failing)} шт.):")
     if stable_failing:
         stable_items = []
@@ -90,17 +94,18 @@ def analyse_repo(repo: str):
             print(f"    • {test_name} — с {ts} — {title}{marker}")
             # HTML элемент списка с кнопкой скролла к соответствующему run
             run_anchor_id = f"run-{first_sha_full}" if first_sha_full else ""
-            label_text = f"{test_name}{marker} — с {ts} — {title}"
+            # Показываем только лист (последний сегмент после ::)
+            leaf_name = test_name.split('::')[-1] if '::' in test_name else test_name
+            label_text = f"{leaf_name}{marker} — с {ts} — {title}"
             label_safe = html.escape(label_text)
             button_html = f" <button onclick=\"scrollToRun('{run_anchor_id}')\">К запуску</button>" if run_anchor_id else ""
-            stable_items.append(label_safe + button_html)
+            stable_items.append({'display': label_safe + button_html, 'raw': test_name})
         html_builder.add_section("🔴 Стабильно падающие тесты", stable_items)
     else:
         print("    ✅ Нет стабильно падающих тестов")
         html_builder.add_section("🔴 Стабильно падающие тесты", ["✅ Нет стабильно падающих тестов"])
 
     # Починенные тесты
-    fixed_tests = behavior_analysis['fixed_tests']
     print(f"\n✅ Починенные тесты ({len(fixed_tests)} шт.):")
     if fixed_tests:
         for test_name, info in fixed_tests.items():
@@ -135,6 +140,9 @@ def analyse_repo(repo: str):
         added = diff['added']
         removed = diff['removed']
         only_here = diff['only_here']
+        # Порядки тестов в текущем и предыдущем ранах
+        current_order = diff.get('order', [])
+        prev_order = diff.get('prev_order', [])
 
         failed_total = len(diff.get('current', set()))
         # Добавляем число падений в метаданные, чтобы использовать в HTML-отчёте
@@ -147,27 +155,62 @@ def analyse_repo(repo: str):
         html_builder.start_run_section(info)
 
         print(f"➕ Новые падения ({len(added)} шт.):" if added else "➕ Новые падения: нет")
-        if added:
-            for t in sorted(added):
+        # Упорядочиваем по порядку текущего рана
+        added_ordered = [t for t in current_order if t in added]
+        if added_ordered:
+            for t in added_ordered:
                 marker = "" if BRANCH == MASTER_BRANCH else \
                     (" (также в master)" if t in results.master_failed else " (только здесь)")
                 print(f"    {t}{marker}")
-        html_builder.add_run_section("➕ Новые падения",
-                                     [
-                                         f"{t}{'' if BRANCH == MASTER_BRANCH else ' (также в master)' if t in results.master_failed else ' (только здесь)'}"
-                                         for t in added])
+        def build_leaf_label(t: str, section: str) -> dict:
+            # метки: также в master/только здесь — только для падений
+            marker = ""
+            if section in ("added", "only_here"):
+                if BRANCH != MASTER_BRANCH:
+                    marker = " (также в master)" if t in results.master_failed else " (только здесь)"
+            # найдём первое падение этого теста
+            binfo = behavior_map.get(t)
+            ts = title = ""
+            anchor_sha = None
+            if binfo and binfo.get('failed_runs'):
+                first_fail = binfo['failed_runs'][0]
+                meta0 = first_fail.get('meta', {})
+                ts = meta0.get('ts', '')
+                title = meta0.get('title', '')
+                anchor_sha = first_fail.get('sha')
+            # Показываем только лист (последний сегмент после ::)
+            leaf_name = t.split('::')[-1] if '::' in t else t
+            label_text = f"{leaf_name}{marker} — с {ts} — {title}" if ts or title else f"{leaf_name}{marker}"
+            label_safe = html.escape(label_text)
+            button_html = f" <button onclick=\"scrollToRun('run-{anchor_sha}')\">К запуску</button>" if anchor_sha else ""
+            return {'display': label_safe + button_html, 'raw': t}
+
+        html_builder.add_run_section(
+            "➕ Новые падения",
+            [build_leaf_label(t, "added") for t in added_ordered]
+        )
 
         print(f"✔ Починились ({len(removed)} шт.):" if removed else "✔ Починились: нет")
-        if removed:
-            for t in sorted(removed):
+        # Упорядочиваем по порядку предыдущего рана
+        removed_ordered = [t for t in prev_order if t in removed]
+        if removed_ordered:
+            for t in removed_ordered:
                 print(f"    {t}")
-        html_builder.add_run_section("✔ Починились", removed)
+        html_builder.add_run_section(
+            "✔ Починились",
+            [build_leaf_label(t, "removed") for t in removed_ordered]
+        )
 
         print(f"⚠ Уникальные падения ({len(only_here)} шт.):" if only_here else "⚠ Уникальные падения: нет")
-        if only_here:
-            for t in sorted(only_here):
+        # Упорядочиваем по порядку текущего рана
+        only_here_ordered = [t for t in current_order if t in only_here]
+        if only_here_ordered:
+            for t in only_here_ordered:
                 print(f"    {t}")
-        html_builder.add_run_section("⚠ Уникальные падения", only_here)
+        html_builder.add_run_section(
+            "⚠ Уникальные падения",
+            [build_leaf_label(t, "only_here") for t in only_here_ordered]
+        )
 
     # --- 4. Статистика --- #
     stats = results.get_statistics()

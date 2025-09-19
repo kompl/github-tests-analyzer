@@ -574,7 +574,9 @@ class GitHubWorkflowAnalyzer:
                     print("⚠ Пропускаем run: нет результатов тестов")
                     test_details = {}
 
-            failed = set(test_details.keys()) if test_details else set()
+            # Сохраняем порядок ключей как в исходных данных (insertion order словаря)
+            failed_order = list(test_details.keys()) if test_details else []
+            failed = set(failed_order)
             if test_details:
                 all_test_details.update(test_details)
 
@@ -584,7 +586,8 @@ class GitHubWorkflowAnalyzer:
                 'ts': ts,
                 'concl': concl,
                 'link': run_link,
-                'branch': branch_name
+                'branch': branch_name,
+                'order': failed_order
             }
 
         return summary, meta, all_test_details

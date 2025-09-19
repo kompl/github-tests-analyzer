@@ -192,6 +192,7 @@ class TestAnalysisResults:
         """Возвращает список изменений между запусками."""
         diffs = []
         prev = set()
+        prev_sha = None
 
         for sha, curr in self.summary.items():
             added = curr - prev
@@ -203,6 +204,8 @@ class TestAnalysisResults:
             diffs.append({
                 'sha': sha,
                 'meta': self.meta[sha],
+                'order': self.meta.get(sha, {}).get('order', []),
+                'prev_order': self.meta.get(prev_sha, {}).get('order', []) if prev_sha else [],
                 'added': added,
                 'removed': removed,
                 'only_here': only_here,
@@ -210,6 +213,7 @@ class TestAnalysisResults:
             })
 
             prev = curr
+            prev_sha = sha
 
         return diffs
 

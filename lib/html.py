@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 import os
 import json
+import html as html_lib
 
 class HtmlReportBuilder:
     def __init__(
@@ -34,15 +35,73 @@ class HtmlReportBuilder:
             'sections': []
         }
 
-    def add_run_section(self, title: str, items: List[str], max_show: int = 10) -> None:
+    def add_run_section(self, title: str, items: List[Any], max_show: int = 10) -> None:
         """Добавляет секцию в текущий run."""
         if not self.current_run:
             raise ValueError("Сначала вызовите start_run_section")
-        sorted_items = sorted(items)
+        # Важно: сохраняем порядок элементов как пришёл (без сортировок)
+        ordered_items = list(items)
+        # Формируем древовидную структуру: разбиваем по '::' на произвольную глубину
+        grouped: Dict[str, List[Dict[str, str]]] = {}
+        tree: List[Dict[str, Any]] = []
+
+        def find_or_create(nodes: List[Dict[str, Any]], name: str) -> Dict[str, Any]:
+            for n in nodes:
+                if n['name'] == name:
+                    return n
+            node = {'name': name, 'children': [], 'leaves': []}
+            nodes.append(node)
+            return node
+
+        default_group_name = 'Без префикса'
+        for item in ordered_items:
+            # item может быть строкой (старый формат) или словарём {'display': HTML, 'raw': исходное имя теста}
+            if isinstance(item, dict):
+                display_html = item.get('display', '')
+                raw_value = item.get('raw', display_html)
+            else:
+                display_html = item
+                raw_value = item
+            # raw_value может содержать HTML/символы — приводим к базовой строке для группировки
+            raw = html_lib.unescape(str(raw_value))
+            base = raw.split(' — ', 1)[0]
+            clean_item = base.split(' (', 1)[0]
+            parts = clean_item.split('::') if '::' in clean_item else [clean_item]
+            # для обратной совместимости первой группировки
+            group_key = parts[0]
+            grouped.setdefault(group_key, []).append({'item': display_html, 'clean_item': clean_item})
+
+            # строим глубокое дерево: последний сегмент НЕ становится отдельной нодой — это лист
+            parent_parts = parts[:-1] if len(parts) > 1 else [default_group_name]
+            nodes = tree
+            for part in parent_parts:
+                node = find_or_create(nodes, part)
+                nodes = node['children']
+            # Добавляем лист к найденному/созданному родителю
+            # На этом уровне нет отдельной ноды для последнего сегмента
+            # Ищем последний родитель снова (nodes сейчас указывает на children последнего родителя)
+            # Поэтому восстановим ссылку на сам последний родитель
+            # (последний созданный/найденный node хранится в переменной node)
+            node['leaves'].append({'item': display_html, 'clean_item': clean_item})
+
+        # Подсчёт количества листьев в поддереве и упорядочивание узлов
+        def compute_total_and_sort(nodes: List[Dict[str, Any]]) -> int:
+            total = 0
+            for n in nodes:
+                # сначала сортируем детей и считаем их total
+                child_total = compute_total_and_sort(n['children']) if n['children'] else 0
+                leaf_count = len(n['leaves'])
+                n['total'] = child_total + leaf_count
+                total += n['total']
+            return total
+
+        compute_total_and_sort(tree)
         self.current_run['sections'].append({
             'title': title,
-            'tests': sorted_items,
-            'total': len(sorted_items),
+            'tests': ordered_items,
+            'grouped': grouped,
+            'tree': tree,
+            'total': len(ordered_items),
             'max_show': max_show
         })
 
