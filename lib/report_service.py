@@ -98,17 +98,19 @@ class ReportService:
                 first_fail = (info.get('failed_runs') or [{}])[0]
                 first_meta = first_fail.get('meta', {})
                 first_sha_full = first_fail.get('sha', '')
+                first_composite_key = first_fail.get('composite_key', '')
                 ts = first_meta.get('ts', '')
                 title = first_meta.get('title', '')
                 print(f"    • {test_name} — с {ts} — {title}{marker}")
-                run_anchor_id = f"run-{first_sha_full}" if first_sha_full else ""
+                run_anchor_id = f"run-{first_composite_key}" if first_composite_key else ""
                 leaf_name = test_name.split('::')[-1] if '::' in test_name else test_name
                 label_text = f"{leaf_name}{marker} — с {ts} — {title}"
                 label_safe = html.escape(label_text)
                 button_html = f" <button onclick=\"scrollToRun('{run_anchor_id}')\">К запуску</button>" if run_anchor_id else ""
                 item_obj = {'display': label_safe + button_html, 'raw': test_name}
                 pos = 10**9
-                order_list = results.meta.get(first_sha_full, {}).get('order', [])
+                # Используем composite_key для поиска порядка
+                order_list = results.meta.get(first_composite_key, {}).get('order', [])
                 if order_list and test_name in order_list:
                     try:
                         pos = order_list.index(test_name)
@@ -167,6 +169,7 @@ class ReportService:
             failed_total = len(diff.get('current', set()))
             info['failed'] = failed_total
             info['sha'] = diff['sha']
+            info['composite_key'] = diff.get('composite_key', '')
             print(f"\n📦 {info['title']} | {info['ts']} | {info['concl']} | failed: {failed_total} | {info['link']}")
 
             html_builder.start_run_section(info)
@@ -186,17 +189,17 @@ class ReportService:
                     marker = " (также в master)" if t in results.master_failed else " (только здесь)"
                 binfo = behavior_map.get(t)
                 ts = title = ""
-                anchor_sha = None
+                anchor_key = None
                 if binfo and binfo.get('failed_runs'):
                     first_fail = binfo['failed_runs'][0]
                     meta0 = first_fail.get('meta', {})
                     ts = meta0.get('ts', '')
                     title = meta0.get('title', '')
-                    anchor_sha = first_fail.get('sha')
+                    anchor_key = first_fail.get('composite_key')
                 leaf_name = t.split('::')[-1] if '::' in t else t
                 label_text = f"{leaf_name}{marker} — с {ts} — {title}" if ts or title else f"{leaf_name}{marker}"
                 label_safe = html.escape(label_text)
-                button_html = f" <button onclick=\"scrollToRun('run-{anchor_sha}')\">К запуску</button>" if anchor_sha else ""
+                button_html = f" <button onclick=\"scrollToRun('run-{anchor_key}')\">К запуску</button>" if anchor_key else ""
                 return {'display': label_safe + button_html, 'raw': t}
 
             html_builder.add_run_section(

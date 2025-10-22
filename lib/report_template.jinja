@@ -210,7 +210,7 @@
 {%- endmacro %}
 
 {% for run in runs %}
-<div class="run-section" {% if run.commit_info.sha is defined %}id="run-{{ run.commit_info.sha }}"{% endif %}>
+<div class="run-section" {% if run.commit_info.composite_key is defined %}id="run-{{ run.commit_info.composite_key }}"{% elif run.commit_info.sha is defined %}id="run-{{ run.commit_info.sha }}"{% endif %}>
     <div class="run-header">
         <h3>🚀 {{ run.commit_info.title }}</h3>
         <div class="run-meta">

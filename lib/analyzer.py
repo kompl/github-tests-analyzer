@@ -406,18 +406,20 @@ class GitHubWorkflowAnalyzer:
             cached = self.artifact_cache.load_parsed_sidecar(self.owner, repo, run_id)
             if cached is not None:
                 details_cached, has_no_tests_cached = cached
-                # Валидно, если есть JUnit/результаты (has_no_tests=False), даже если падений нет
-                # или если есть детали падений.
-                is_valid_cached = (not has_no_tests_cached) or bool(details_cached)
+                print(f"💾 Кеш для run {run_id}: has_no_tests={has_no_tests_cached}, details_count={len(details_cached) if details_cached else 0}")
+                # Валидно ТОЛЬКО если has_no_tests=False (т.е. результаты тестов найдены)
+                is_valid_cached = not has_no_tests_cached
                 if is_valid_cached:
+                    print(f"✅ Используем кешированные данные для run {run_id}")
                     return details_cached or {}, has_no_tests_cached
                 else:
-                    print(f"♻️ Кэш для run {run_id} невалиден (пусто или has_no_tests), пробуем переизвлечь…")
+                    print(f"♻️ Кеш для run {run_id} невалиден (has_no_tests=True), пробуем переизвлечь…")
         else:
             print(f"🧹 Принудительное обновление кэша для run {run_id}: игнорируем сохранённые данные")
 
         # 2) Основной способ — артефакты
         details, has_no_tests = self.artifacts_extractor.extract(repo, run_id, run_info=run_info)
+        print(f"📦 Артефакты для run {run_id}: has_no_tests={has_no_tests}, details_count={len(details) if details else 0}")
 
         # 2b) Fallback — логи
         # Валидно, если JUnit найден (has_no_tests=False), даже когда падений нет.
@@ -425,12 +427,15 @@ class GitHubWorkflowAnalyzer:
         if not is_valid:
             print(f"🔁 Fallback: пробуем извлечь результаты тестов из логов для run {run_id}")
             alt_details, alt_has_no_tests = self.log_extractor.extract(repo, run_id, run_info=run_info)
+            print(f"📝 Логи для run {run_id}: has_no_tests={alt_has_no_tests}, details_count={len(alt_details) if alt_details else 0}")
             # Принимаем результаты логов, если там обнаружены тесты (alt_has_no_tests == False),
             # даже если падений нет (alt_details пустой)
             if not alt_has_no_tests:
                 details, has_no_tests = alt_details, alt_has_no_tests
+                print(f"✅ Используем результаты из логов для run {run_id}")
 
         # 3) Сохраняем в Mongo
+        print(f"💾 Сохраняем в кэш run {run_id}: has_no_tests={has_no_tests}, details_count={len(details) if details else 0}")
         self.artifact_cache.save_parsed_sidecar(self.owner, repo, run_id, details, has_no_tests)
         return details or {}, has_no_tests
 
@@ -553,8 +558,8 @@ class GitHubWorkflowAnalyzer:
 
         Returns:
             Tuple[Dict, Dict, Dict]: (summary, meta, all_test_details)
-            - summary: sha -> set(failed_tests)
-            - meta: sha -> {'title', 'ts', 'concl', 'link', 'branch'}
+            - summary: composite_key -> set(failed_tests), где composite_key = f"{sha}_{run_id}"
+            - meta: composite_key -> {'sha', 'run_id', 'title', 'ts', 'concl', 'link', 'branch'}
             - all_test_details: test_name -> list of details
         """
         runs = self.get_recent_runs(repo, branch, max_runs)
@@ -565,34 +570,23 @@ class GitHubWorkflowAnalyzer:
 
         for i, run in enumerate(runs):
             sha = run['head_sha']
+            run_id = run['id']
+            # Составной ключ для уникальной идентификации каждого билда
+            composite_key = f"{sha}_{run_id}"
+            
             title = self.get_commit_title(repo, sha) or sha[:7]
             branch_name = run.get('head_branch')
             ts = datetime.fromisoformat(
                 (run.get('run_started_at') or run.get('created_at')).replace('Z', '+00:00')
             ).strftime('%Y-%m-%d %H:%M:%S')
             concl = run.get('conclusion')
-            run_link = f"https://github.com/{self.owner}/{repo}/actions/runs/{run['id']}"
+            run_link = f"https://github.com/{self.owner}/{repo}/actions/runs/{run_id}"
 
             print(f"🔍 {title} | {branch_name} | {ts} | Статус: {concl} | {run_link}")
 
-            # Используем предварительно распарсенные детали, если они есть
-            test_details = run.get('parsed_test_details')
-            if test_details is None:
-                # Сначала пробуем получить через единый хелпер
-                test_details, has_no_tests = self._load_or_extract_run_details(
-                    repo,
-                    run['id'],
-                    run_info={
-                        'title': title,
-                        'ts': ts,
-                        'concl': concl,
-                        'link': run_link,
-                        'branch': branch_name
-                    }
-                )
-                if has_no_tests:
-                    print("⚠ Пропускаем run: нет результатов тестов")
-                    test_details = {}
+            # Используем предварительно распарсенные детали
+            # Все невалидные билды уже отфильтрованы в get_recent_runs
+            test_details = run.get('parsed_test_details', {})
 
             # Сохраняем порядок ключей как в исходных данных (insertion order словаря)
             failed_order = list(test_details.keys()) if test_details else []
@@ -600,8 +594,10 @@ class GitHubWorkflowAnalyzer:
             if test_details:
                 all_test_details.update(test_details)
 
-            summary[sha] = failed
-            meta[sha] = {
+            summary[composite_key] = failed
+            meta[composite_key] = {
+                'sha': sha,
+                'run_id': run_id,
                 'title': title,
                 'ts': ts,
                 'concl': concl,

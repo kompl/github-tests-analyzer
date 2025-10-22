@@ -35,7 +35,7 @@ class HtmlReportBuilder:
             'sections': []
         }
 
-    def add_run_section(self, title: str, items: List[Any], max_show: int = 10) -> None:
+    def add_run_section(self, title: str, items: List[Any], max_show: int = 0) -> None:
         """Добавляет секцию в текущий run."""
         if not self.current_run:
             raise ValueError("Сначала вызовите start_run_section")
@@ -115,7 +115,7 @@ class HtmlReportBuilder:
         self,
         title: str,
         items: List[str],
-        max_show: int = 10,
+        max_show: int = 0,
         commit_info: Optional[Dict[str, str]] = None
     ) -> None:
         """Добавляет обычную секцию (для первого запуска)."""

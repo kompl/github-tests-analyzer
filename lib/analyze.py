@@ -47,13 +47,13 @@ class TestAnalysisResults:
         print(f"🔍 Анализируем поведение {len(all_tests)} уникальных тестов в {len(self.summary)} ранах")
 
         # Создаем матрицу состояний для каждого теста в каждом ране
-        ordered_shas = list(self.summary.keys())  # Раны уже в хронологическом порядке
+        ordered_keys = list(self.summary.keys())  # Раны уже в хронологическом порядке (составные ключи)
         test_states = {}  # test_name -> [True/False] для каждого рана
 
         for test in all_tests:
             states = []
-            for sha in ordered_shas:
-                states.append(test in self.summary[sha])
+            for composite_key in ordered_keys:
+                states.append(test in self.summary[composite_key])
             test_states[test] = states
 
         # Анализируем паттерны
@@ -62,7 +62,7 @@ class TestAnalysisResults:
         flaky_tests = {}
 
         for test, states in test_states.items():
-            behavior = self._analyze_test_pattern(test, states, ordered_shas)
+            behavior = self._analyze_test_pattern(test, states, ordered_keys)
 
             if behavior['type'] == 'stable_failing':
                 stable_failing[test] = behavior
@@ -83,8 +83,14 @@ class TestAnalysisResults:
             'flaky_tests': flaky_tests
         }
 
-    def _analyze_test_pattern(self, test_name: str, states: List[bool], shas: List[str]) -> Dict[str, Any]:
-        """Анализирует паттерн поведения одного теста."""
+    def _analyze_test_pattern(self, test_name: str, states: List[bool], composite_keys: List[str]) -> Dict[str, Any]:
+        """Анализирует паттерн поведения одного теста.
+        
+        Args:
+            test_name: имя теста
+            states: список состояний (True=failed, False=passed)
+            composite_keys: список составных ключей вида 'sha_runid'
+        """
         first_fail_idx = None
         last_fail_idx = None
         fail_count = 0
@@ -127,9 +133,12 @@ class TestAnalysisResults:
         failed_runs = []
         for i, is_failed in enumerate(states):
             if is_failed:
+                composite_key = composite_keys[i]
+                meta_info = self.meta[composite_key]
                 failed_runs.append({
-                    'sha': shas[i],
-                    'meta': self.meta[shas[i]],
+                    'sha': meta_info.get('sha', composite_key.split('_')[0]),
+                    'composite_key': composite_key,
+                    'meta': meta_info,
                     'run_number': i + 1
                 })
 
@@ -137,13 +146,14 @@ class TestAnalysisResults:
         next_pr_link = None
         next_commit_info = None
         if last_fail_idx is not None and last_fail_idx + 1 < total_runs:
-            next_run_sha = shas[last_fail_idx + 1]
-            next_run_meta = self.meta.get(next_run_sha)
+            next_composite_key = composite_keys[last_fail_idx + 1]
+            next_run_meta = self.meta.get(next_composite_key)
             if next_run_meta:
                 # Берем ссылку на run (который содержит информацию о коммите)
                 next_pr_link = next_run_meta.get('link')
+                next_sha = next_run_meta.get('sha', next_composite_key.split('_')[0])
                 next_commit_info = {
-                    'sha': next_run_sha[:7],
+                    'sha': next_sha[:7],
                     'title': next_run_meta.get('title', ''),
                     'ts': next_run_meta.get('ts', ''),
                     'link': next_pr_link
@@ -192,20 +202,23 @@ class TestAnalysisResults:
         """Возвращает список изменений между запусками."""
         diffs = []
         prev = set()
-        prev_sha = None
+        prev_key = None
 
-        for sha, curr in self.summary.items():
+        for composite_key, curr in self.summary.items():
             added = curr - prev
             removed = prev - curr
             only_here = curr - self.master_failed if self.master_failed else set()
-
+            
+            # Извлекаем SHA для логирования
+            sha = self.meta[composite_key].get('sha', composite_key.split('_')[0])
             print(f"📊 Диф для {sha[:7]}: +{len(added)} -{len(removed)} (уникальных: {len(only_here)})")
 
             diffs.append({
                 'sha': sha,
-                'meta': self.meta[sha],
-                'order': self.meta.get(sha, {}).get('order', []),
-                'prev_order': self.meta.get(prev_sha, {}).get('order', []) if prev_sha else [],
+                'composite_key': composite_key,
+                'meta': self.meta[composite_key],
+                'order': self.meta.get(composite_key, {}).get('order', []),
+                'prev_order': self.meta.get(prev_key, {}).get('order', []) if prev_key else [],
                 'added': added,
                 'removed': removed,
                 'only_here': only_here,
@@ -213,7 +226,7 @@ class TestAnalysisResults:
             })
 
             prev = curr
-            prev_sha = sha
+            prev_key = composite_key
 
         return diffs
 

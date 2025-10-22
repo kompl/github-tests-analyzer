@@ -8,20 +8,20 @@ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
 REPOS = ['hoper']  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
-BRANCH = 'fix_features'  # Анализируемая ветка
+BRANCHES = ['v6.2']  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
 MAX_RUNS = 25  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
-FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
+FORCE_REFRESH_CACHE = True  # Принудительно игнорировать кэш и переизвлекать результаты
 
-def analyse_repo(repo: str):
+def analyse_repo(repo: str, branch: str):
     """Делегирует анализ ReportService."""
     service = ReportService(GITHUB_TOKEN, OWNER, workflow_file=WORKFLOW_FILE)
     service.analyze_repo(
         repo=repo,
-        branch=BRANCH,
+        branch=branch,
         master_branch=MASTER_BRANCH,
         max_runs=MAX_RUNS,
         output_dir=OUTPUT_DIR,
@@ -46,11 +46,12 @@ def main():
         print("🧹 Инвалидация кэша включена (FORCE_REFRESH_CACHE)")
 
     for repo in REPOS:
-        try:
-            analyse_repo(repo)
-        except Exception as e:
-            print(f"🔥 Ошибка при обработке {repo}: {e}")
-            raise e
+        for branch in BRANCHES:
+            try:
+                analyse_repo(repo, branch)
+            except Exception as e:
+                print(f"🔥 Ошибка при обработке {repo}{branch}: {e}")
+                raise e
 
 
 if __name__ == '__main__':
