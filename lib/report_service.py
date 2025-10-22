@@ -122,7 +122,7 @@ class ReportService:
             html_builder.add_section("🔴 Стабильно падающие тесты", stable_items)
         else:
             print("    ✅ Нет стабильно падающих тестов")
-            html_builder.add_section("🔴 Стабильно падающие тесты", ["✅ Нет стабильно падающих тестов"])
+            html_builder.add_section("🔴 Стабильно падающие тесты", [])
 
         # Починенные
         print(f"\n✅ Починенные тесты ({len(fixed_tests)} шт.):")
@@ -136,7 +136,7 @@ class ReportService:
             )
         else:
             print("    ❌ Нет починенных тестов")
-            html_builder.add_section("✅ Починенные тесты", ["❌ Нет починенных тестов"])
+            html_builder.add_section("✅ Починенные тесты", [])
 
         # Flaky
         print(f"\n🟡 Нестабильные (flaky) тесты ({len(flaky_tests)} шт.):")
@@ -154,7 +154,7 @@ class ReportService:
             )
         else:
             print("    ✅ Нет нестабильных тестов")
-            html_builder.add_section("🟡 Нестабильные (flaky) тесты", ["✅ Нет нестабильных тестов"])
+            html_builder.add_section("🟡 Нестабильные (flaky) тесты", [])
 
         # Диффы по запускам
         print("\n=== 📊 Изменения падений тестов по последним запускам ===")
