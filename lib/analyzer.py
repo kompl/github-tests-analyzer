@@ -139,7 +139,7 @@ class LogTestResultsExtractor:
                                 })
                     else:
                         i += 1
-
+        has_no_tests = not bool(failed)
         return failed, has_no_tests
 
     def extract(self, repo: str, run_id: int, run_info: Optional[Dict[str, Any]] = None
@@ -148,7 +148,7 @@ class LogTestResultsExtractor:
         zip_bytes = self.download_logs_func(repo, run_id, run_info=run_info)
         if not zip_bytes:
             print(f"⚠ Не удалось получить zip логов для run {run_id}")
-            return {}, False
+            return {}, True
         return self.parse_zip(zip_bytes, detect_no_tests=True, test_name_joiner=' | ')
 
 
@@ -256,14 +256,14 @@ class ArtifactsTestResultsExtractor:
                 ) -> Tuple[Dict[str, List[Dict]], bool]:
         artifacts = self._list_run_artifacts(repo, run_id)
         if not artifacts:
-            print(f"ℹ️ Для run {run_id} артефактов не найдено")
-            return {}, False
+            print(f"⚠ Для run {run_id} артефактов не найдено")
+            return {}, True  # has_no_tests = True!
 
         # Берём все артефакты test-reports-* (не истёкшие)
         report_artifacts = [a for a in artifacts if str(a.get('name', '')).startswith('test-reports-') and not a.get('expired')]
         if not report_artifacts:
-            print(f"ℹ️ Для run {run_id} нет артефактов вида 'test-reports-*'")
-            return {}, False
+            print(f"⚠ Для run {run_id} нет артефактов вида 'test-reports-*'")
+            return {}, True  # has_no_tests = True!
 
         combined: Dict[str, List[Dict]] = {}
         found_any_junit = False
@@ -481,6 +481,7 @@ class GitHubWorkflowAnalyzer:
                     details, has_no_tests = self._load_or_extract_run_details(repo, run['id'])
                     if has_no_tests:
                         print(f"⚠ Run {run['id']} не содержит результатов тестов (No test results), пропускаем")
+                        print(f"   Дата: {run.get('run_started_at', run.get('created_at'))}")
                         continue
                     # Сохраняем распарсенные детали в объект run, чтобы не парсить повторно позже
                     # Даже если details пустой, это валидное состояние (все тесты прошли).

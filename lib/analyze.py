@@ -167,7 +167,7 @@ class TestAnalysisResults:
             'first_fail_run': first_fail_idx + 1 if first_fail_idx is not None else None,
             'last_fail_run': last_fail_idx + 1 if last_fail_idx is not None else None,
             'failed_runs': failed_runs,
-            'pattern': ''.join(['F' if s else 'P' for s in states]),  # F=Failed, P=Passed
+            'pattern': ''.join(['🔴' if s else '🟢' for s in states]),  # 🔴=Failed, 🟢=Passed
             'details': self.test_details.get(test_name, []),
             'next_pr_link': next_pr_link,
             'next_commit_info': next_commit_info

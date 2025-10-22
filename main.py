@@ -11,10 +11,10 @@ REPOS = ['hoper']  # <-- список репозиториев
 BRANCHES = ['v6.0']  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 25  # Сколько запусков анализируем
+MAX_RUNS = 125  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
-FORCE_REFRESH_CACHE = True  # Принудительно игнорировать кэш и переизвлекать результаты
+FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
 
 def analyse_repo(repo: str, branch: str):
     """Делегирует анализ ReportService."""

@@ -147,10 +147,8 @@ class ReportService:
                 print(f"    • {test_name} (паттерн: {pattern}, падает {fail_rate:.1f}% времени)")
             html_builder.add_section(
                 "🟡 Нестабильные (flaky) тесты",
-                [
-                    f"{test} (паттерн: {info['pattern']}, падает {(info['fail_count'] / info['total_runs']) * 100:.1f}% времени)"
-                    for test, info in flaky_tests.items()
-                ]
+                [f"{test} (паттерн: {info['pattern']}, падает {(info['fail_count'] / info['total_runs']) * 100:.1f}% времени)"
+                 for test, info in flaky_tests.items()]
             )
         else:
             print("    ✅ Нет нестабильных тестов")
@@ -190,17 +188,28 @@ class ReportService:
                 binfo = behavior_map.get(t)
                 ts = title = ""
                 anchor_key = None
-                if binfo and binfo.get('failed_runs'):
-                    first_fail = binfo['failed_runs'][0]
-                    meta0 = first_fail.get('meta', {})
-                    ts = meta0.get('ts', '')
-                    title = meta0.get('title', '')
-                    anchor_key = first_fail.get('composite_key')
+                badge_html = ""
+                
+                if binfo:
+                    # Определяем тип лампочки на основе поведения теста
+                    behavior_type = binfo.get('type', '')
+                    if behavior_type == 'stable_failing':
+                        badge_html = " 🔴"  # Красная лампочка
+                    elif behavior_type == 'flaky':
+                        badge_html = " 🟡"  # Желтая лампочка
+                    
+                    if binfo.get('failed_runs'):
+                        first_fail = binfo['failed_runs'][0]
+                        meta0 = first_fail.get('meta', {})
+                        ts = meta0.get('ts', '')
+                        title = meta0.get('title', '')
+                        anchor_key = first_fail.get('composite_key')
+                
                 leaf_name = t.split('::')[-1] if '::' in t else t
                 label_text = f"{leaf_name}{marker} — с {ts} — {title}" if ts or title else f"{leaf_name}{marker}"
                 label_safe = html.escape(label_text)
                 button_html = f" <button onclick=\"scrollToRun('run-{anchor_key}')\">К запуску</button>" if anchor_key else ""
-                return {'display': label_safe + button_html, 'raw': t}
+                return {'display': label_safe + badge_html + button_html, 'raw': t}
 
             html_builder.add_run_section(
                 "➕ Новые падения",
