@@ -7,8 +7,8 @@ PARENT_DIR="/Users/nikolaevigor/dev"  # Замените на реальный �
 SSH_KEY_PATH="/Users/nikolaevigor/.ssh/id_rsa"
 
 # Список проектов и их директорий
-PROJECTS_LIST=("hcr" )
-# PROJECTS_LIST=("hard" "hpd" "hmed" "hamd" "hcd" "hcr")
+PROJECTS_LIST=("hccp" )
+# PROJECTS_LIST=("hard" "hpd" "hmed" "hamd" "hcd" "hcr" "hydra-migration" "hocs" "release-helper" "compatibility-table-updater" "hccp")
 get_name() {
     case "$1" in
         "hydra-migration") echo "hydra-migration" ;;
@@ -30,10 +30,21 @@ get_user() {
     esac
 }
 
+get_workdir() {
+    case "$1" in
+        "release-helper") echo "/app" ;;
+        "compatibility-table-updater") echo "/app" ;;
+        *) echo "/opt/hydra/$1" ;;
+    esac
+}
+
 get_lock_files() {
     case "$1" in
         "hcr") echo "Gemfile.lock" ;;
+        "release-helper") echo "Gemfile.lock" ;;
+        "compatibility-table-updater") echo "Gemfile.lock" ;;
         "hydra-migration") echo "frontend/yarn.lock Gemfile.lock" ;;
+        "hccp") echo "frontend/yarn.lock Gemfile.lock" ;;
         "hydra-messages-relay") echo "go.mod go.sum" ;;
         *) echo "poetry.lock" ;;
     esac
@@ -53,6 +64,7 @@ for i in "${!PROJECTS_LIST[@]}"; do
     PROJECT_USER=$(get_user "$PROJECT_KEY")
     FULL_PATH="$PARENT_DIR/$PROJECT_DIR"
     LOCK_FILES_STR=$(get_lock_files "$PROJECT_KEY")
+    WORKDIR=$(get_workdir "$PROJECT_KEY")
 
     # Преобразуем строку в массив
     read -ra LOCK_FILES <<< "$LOCK_FILES_STR"
@@ -115,7 +127,7 @@ for i in "${!PROJECTS_LIST[@]}"; do
         for LOCK_FILE in "${LOCK_FILES[@]}"; do
             echo "📦 Копирование $LOCK_FILE из контейнера..."
 
-            if docker cp "$CONTAINER_ID:/opt/hydra/$PROJECT_NAME/$LOCK_FILE" "$PWD/$LOCK_FILE"; then
+            if docker cp "$CONTAINER_ID:$WORKDIR/$LOCK_FILE" "$PWD/$LOCK_FILE"; then
                 echo "✅ $LOCK_FILE успешно скопирован для $PROJECT_NAME"
                 COPY_SUCCESS+=("$LOCK_FILE")
             else

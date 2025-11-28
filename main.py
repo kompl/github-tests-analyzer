@@ -6,12 +6,12 @@ from lib.report_service import ReportService
 # ============ Конфигурация ============ #
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 OWNER = 'hydra-billing'  # Организация / пользователь
-REPOS = ['hoper']  # <-- список репозиториев
+REPOS = ['hydra-server']  # <-- список репозиториев
 # REPOS = ['hoper', 'hydra-server', "hydra-core", "hupo"]  # <-- список репозиториев
-BRANCHES = ['v6.0']  # Анализируемая ветка
+BRANCHES = ['v6.2']  # Анализируемая ветка
 MASTER_BRANCH = 'master'  # Ветка-эталон
 WORKFLOW_FILE = 'ci.yml'  # Запускаемый workflow
-MAX_RUNS = 125  # Сколько запусков анализируем
+MAX_RUNS = 100  # Сколько запусков анализируем
 OUTPUT_DIR = Path('downloaded_logs')  # Куда складывать txt и HTML
 SAVE_LOGS = False  # Оставлять .txt на диске?
 FORCE_REFRESH_CACHE = False  # Принудительно игнорировать кэш и переизвлекать результаты
