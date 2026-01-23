@@ -7,7 +7,7 @@ PARENT_DIR="/Users/nikolaevigor/dev"  # Замените на реальный �
 SSH_KEY_PATH="/Users/nikolaevigor/.ssh/id_rsa"
 
 # Список проектов и их директорий
-PROJECTS_LIST=("hccp" )
+PROJECTS_LIST=("hcd")
 # PROJECTS_LIST=("hard" "hpd" "hmed" "hamd" "hcd" "hcr" "hydra-migration" "hocs" "release-helper" "compatibility-table-updater" "hccp")
 get_name() {
     case "$1" in
