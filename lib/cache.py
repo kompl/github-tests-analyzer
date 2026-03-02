@@ -141,6 +141,37 @@ class ArtifactCache:
             print(f"⚠ Ошибка загрузки результатов из MongoDB: {e}")
             return None
 
+    def find_earliest_run_with_tests(
+        self,
+        owner: str,
+        repo: str,
+        test_names: List[str],
+        candidate_run_ids: Optional[List[int]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        For each test_name find the earliest run_id (optionally restricted to candidate_run_ids)
+        where this test appears in details_list.
+
+        Returns {test_name: {"run_id": int, "created_at": str}}.
+        """
+        result: Dict[str, Dict[str, Any]] = {}
+        base_query: Dict[str, Any] = {"owner": owner, "repo": repo, "has_no_tests": False}
+        if candidate_run_ids:
+            base_query["run_id"] = {"$in": [int(rid) for rid in candidate_run_ids]}
+
+        for test_name in test_names:
+            query = {**base_query, "details_list.test_name": test_name}
+            try:
+                doc = self.coll.find_one(query, {"run_id": 1, "created_at": 1}, sort=[("run_id", ASCENDING)])
+                if doc:
+                    result[test_name] = {
+                        "run_id": doc["run_id"],
+                        "created_at": doc.get("created_at", ""),
+                    }
+            except Exception as e:
+                print(f"⚠ Ошибка поиска истории теста в MongoDB: {e}")
+        return result
+
     # ---------- Вспомогательная утилита: сохранить txt из zip на диск (опционально) ---------- #
     def save_txt_from_zip(self, zip_bytes: bytes, save_dir: Union[str, Path], run_prefix: str = "") -> int:
         """Извлекает и сохраняет txt файлы из zip-архива в указанную директорию."""

@@ -609,6 +609,24 @@ class GitHubWorkflowAnalyzer:
 
         return summary, meta, all_test_details
 
+    def get_branch_run_ids(self, repo: str, branch: str, max_pages: int = 5) -> List[int]:
+        """Get completed run_ids for a branch from GitHub API (lightweight, no log parsing)."""
+        run_ids: List[int] = []
+        for page in range(1, max_pages + 1):
+            url = f'https://api.github.com/repos/{self.owner}/{repo}/actions/workflows/{self.workflow_file}/runs'
+            params = {'branch': branch, 'per_page': 100, 'page': page}
+            try:
+                resp = self.github_get(url, params=params)
+                items = resp.json().get('workflow_runs', [])
+                if not items:
+                    break
+                for run in items:
+                    if run['status'] == 'completed' and run.get('conclusion') in ('success', 'failure'):
+                        run_ids.append(run['id'])
+            except requests.RequestException:
+                break
+        return run_ids
+
     def get_master_failed_tests(self, repo: str, master_branch: str = 'master') -> Set[str]:
         """Получает список падающих тестов в master ветке."""
         master_run = self.get_latest_completed_run(repo, master_branch)

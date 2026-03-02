@@ -1,0 +1,365 @@
+{"hydra-core":
+  {"6.3.0.3" =>
+    {tasks: ["AIS-8967"],
+     commits:
+      ["cd2d254c089f65c937aab43bff0b1637dabcf7e0",
+       "132ebcf2401599d3bb944a6f9a2d4c3785a5c4b4"],
+     translations: ["https://github.com/hydra-billing/hydra-core/pull/6411"]},
+   "6.0.0.192" =>
+    {tasks: ["AIS-8976"],
+     commits:
+      ["e033aa2b2bb9803395db8c789ef547261803e05b",
+       "3720f3ad1d40b2f52e647f68a1a08a8ed1275172"],
+     translations: []}},
+ "hydra-server":
+  {"6.3.0.3" =>
+    {tasks: ["ADM-3191"],
+     commits: ["37568a7d096c6df509fb474211464549fb1dd354"],
+     translations: []},
+   "6.2.1.4" =>
+    {tasks: ["ADM-3191"],
+     commits: ["b35aaf0187a05f933fa73bd6b8191b19dd68afb4"],
+     translations: []},
+   "6.2.0.26" =>
+    {tasks: ["ADM-3191"],
+     commits: ["697e5e79d47500af0c2fe360edd57f1e31113f0c"],
+     translations: []}},
+ hoper:
+  {"6.3.0.2" =>
+    {tasks:
+      ["HOPER-5925",
+       "REST-349",
+       "HOPER-5953",
+       "HOPER-5923",
+       "HOPER-5932",
+       "INT-570",
+       "HOPER-5952",
+       "HOPER-5081",
+       "HOPER-5866"],
+     commits:
+      ["187b63a362ddd47823490e7f44a0251a63a8eea4",
+       "fce66b0e030792a35a11e80130dc7581c25835f9",
+       "660b2b974a31d313cbae7e5b45557e6eb5cb9b70",
+       "bdcba4236800b7148da68fb146a49e705aeb2155",
+       "9cfab5e37c86393b7f096c4767c0d7c467d082db",
+       "3f396c2d0e76fb988088711ac4d1b2406150b659",
+       "c01bceaaf808773508fc6a50942f943ea6b5ff5a",
+       "2be929509ab33d8e43900412cf6f0c0ecc79abed",
+       "c099252447009cf06288918677f8557faa65a19c",
+       "46c26c933db70ba614c33c1d87a9917148fb2dc2",
+       "73dbb9b3238daabffc4a96365846ac2dc854ee96",
+       "ba49fe5b960f6300daa71c4654122f1aa02256c4",
+       "27696f3f76aa6f966c93e13fdd874b6e25a468bf",
+       "a4b96909f17b850f6590fa587cff6c9f6e89c210",
+       "06fbb19580feb38b37e93cbfc363bae3035f0e77",
+       "5b0ca135f4771414bf97dd7eaf5925f7465dd68f",
+       "df61bbb7597ea60d4a8d576948ef597e96ee7d50",
+       "ca0b7c8a4c1bc6b3038ebdc593741ef4407b07f4",
+       "1c6f4513e3e6ae3fbeab721eeaecc9d4afcd20c3",
+       "403e8a98ae93da81195213922272c8008f7487dd",
+       "10010b19df02ca26332d63dab1654b22b2b79ef9",
+       "c314cb3d5d313fcf21609a6c605ae6de7767c20b",
+       "92c5de065cb88c14a952c40888720b483069fe76",
+       "33e23e9946abb76ef16361cf64d265fc6c0598e5",
+       "c06953ee728e897de02e98a99a40f1b8b42dfac3",
+       "3fe23588ba3f7c2e589423d163881c03daf36b2b",
+       "835659176bd0be714062729a16d7a45ea5e4cdaa",
+       "3abb5b73778a3effe0de3716650f543e65bec717",
+       "b8726af6ee10cd0842c7c3740ccab707f4329b94",
+       "2c12027148d21c66625152d08f372f2277e2033c"],
+     translations: []},
+   "6.2.1.5" =>
+    {tasks:
+      ["HOPER-5925", "REST-349", "HOPER-5953", "HOPER-5923", "HOPER-5932"],
+     commits:
+      ["c7722d8bbcb8755f2fb7e599a1cd6fb148a40062",
+       "b5ef67dd7e7abcff848bf60f96ad893d3f3f8cb8",
+       "e9560e090b8a94558307eeea67a54f74f3712db1",
+       "60b7c6cff5f7e9c16024b46381f441ef1ead03de",
+       "5ab3d6bcc31dd6158caa54979ac60a136c27886d"],
+     translations: []},
+   "6.2.0.69" =>
+    {tasks: ["HOPER-5925"],
+     commits: ["1b4adabf33cdfd9faa04d12a284c8d30c9db1f40"],
+     translations: []},
+   "6.0.0.135" =>
+    {tasks: ["REST-349"],
+     commits: ["9843ee67bbc4fab02cc6812bd043309f18ed88f6"],
+     translations: []}},
+ hupo:
+  {"6.3.0.3" =>
+    {tasks: ["ADM-3191"],
+     commits:
+      ["f5a40fff0e0915b210cd49d6ba1cf349680ba1c9",
+       "68490577a67e7fa5efa5a46faf86016999a90d66"],
+     translations:
+      ["https://github.com/hydra-billing/hupo/pull/790",
+       "https://gitlab.com/latera/clients-stuff/-/merge_requests/224"]},
+   "6.2.1.6" =>
+    {tasks: [],
+     commits: ["b2c36aa9dc9532d9637c558ae199a15142d48171"],
+     translations: []},
+   "6.2.0.53" =>
+    {tasks: ["ADM-3191"],
+     commits:
+      ["d5581f003805fd37bd053932136531fbac3a28dd",
+       "8de11952f4fc364c28649927c0babae9b88b9678"],
+     translations: []},
+   "6.0.0.81" =>
+    {tasks: ["ADM-3191"],
+     commits: ["0e5681266ab67e802296e30f0c8d5744cd914ced"],
+     translations: []}},
+ hard:
+  {"6.2.1.3" =>
+    {tasks: ["ADM-3191"],
+     commits: ["44090cb95dc2aba8baf6d69bd9fdb4f94cfab436"],
+     translations: []}},
+ hpd:
+  {"6.2.1.4" =>
+    {tasks: ["ADM-3191", "ADM-3173"],
+     commits:
+      ["41557927244ceb8547e65f1b2378db3e4bfcbb0a",
+       "962ff594957559daa293292804706b04fd7e836b"],
+     translations: []}},
+ hpay:
+  {"6.2.1.3" =>
+    {tasks: ["INT-570"],
+     commits:
+      ["cd5e0d99e078dabf8c75ed8ec0900c1292c43e81",
+       "5fa5b2f15310b6370f73a8ebb945c96defa4eaf4",
+       "cdb7d420b4bd728a2debc3d90362b47d95aa04ff",
+       "495bdc8a431bde3397b761677989878b8eeda326",
+       "ece6c83fcc4a1daa2ad41de9e151c4e47b45eb1d"],
+     translations: []}},
+ hsnmp:
+  {"6.3.0.2" =>
+    {tasks: ["ADM-3191", "INT-653"],
+     commits:
+      ["b49d70943b25eba43744affe9da055c92e6343be",
+       "15524c3d6df06f4ae936d3167a4a85736ca666e4"],
+     translations: []},
+   "6.2.1.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["d753686b9ed309b75c3e4a75d15cdbd98334d270"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["c8683b8161a4df63a8417d2ad3e835da0044be76"],
+     translations: []},
+   "6.0.0.7" =>
+    {tasks: [],
+     commits: ["b422483cdd9ebfd053ded47c62351a410d163add"],
+     translations: []}},
+ hmed:
+  {"6.3.0.3" =>
+    {tasks: ["HMED-141"],
+     commits: ["9e7f8e6f3b52038921f0bf6998615336980acf51"],
+     translations: []},
+   "6.0.0.6" =>
+    {tasks: ["ADM-3191"],
+     commits: ["3928f6f72406bdeef321099841c69f2f33fe7051"],
+     translations: []}},
+ hocs:
+  {"6.3.0.2" =>
+    {tasks: ["HOCS-108", "ADM-3191", "INT-653"],
+     commits:
+      ["79b3d0bd8dd9c7047559238c2f37be8423203196",
+       "880b9b6a8ce8646fd4928941de39c72b169b8948",
+       "cd753bbdf7160919c9ef31ee2acc1b1bb303e439"],
+     translations: []}},
+ hccp:
+  {"6.3.0.3" =>
+    {tasks: ["ADM-3191"],
+     commits: ["1ea95d9688f0967a53fe9a21c17214999d7a499c"],
+     translations: ["https://github.com/hydra-billing/hccp/pull/486"]},
+   "6.2.1.2" =>
+    {tasks: ["ADM-3191", "INT-570"],
+     commits:
+      ["9314453ef105a4d52aeb4ba35f74702bd8433fcc",
+       "34bae7aee69130764f0bc37c27aac340fef0f557",
+       "2ea5b9ce6aa4c517b4a7d3a2f97d2ebf382dcd57",
+       "902290e823f4e3f1c79e243e50ee5e91efdd9843",
+       "de63b596cc7b9f6a0c4da75054cb21020228ec72",
+       "3f7c8106771a7955b482debb7641103dc17d4e6c",
+       "7834789397561a7d45c839499b6bab69e3a2a726",
+       "d9f82135b3e3133d3fcb42e08abf65f07c2eee42",
+       "b47695c253375975d7371366b9beebd5485de049",
+       "d7099e2bfa1577154090a5952da34fd0be1ce4fe",
+       "03868eba86c39d18feea7222e23d9dc3daccbd40",
+       "e0de07bddcf6a93e827a69f131fb1fd92d8f57c7",
+       "a0d6cc9a3d9157b5a6d8d2e23f62d633d45af99b",
+       "8f5257f238d87573ac27e1578ca8c23674c90e83",
+       "1c61963a3da3735d81c39a287a59f58e27f2124e",
+       "6b153417dfb69eda60c2d6576f1f3cbd36c313ae",
+       "aa4fca05e4f958dd4a32460570dd5154eccf0104",
+       "e911e91323cacf9d005e020aab462d1c6d9608a5",
+       "6c6e16dd7713161a2bddaec79b2e724a078d803e",
+       "35bf1a3d6d8c77c2c9dedcf3afc16c96d11d6124",
+       "033ab981528c374c3eaf4ec7dfe18f300cdeee60",
+       "1c5057477ec16e2be6ad24b796744c28b500cb29",
+       "50c20c48cc52dfa8b67f02e688cf8a7cdf276313",
+       "471dbce808dca194dd1b59f20f4f7eee97f30446",
+       "a58dd77df6ca5f951113d91f5796404783e2ce77",
+       "3e7e0574ce39f573b849b26d8996aae53e275d31",
+       "456e769eef21422825616fba8f4e22fba49f19cf",
+       "6d1caf0b126127c0e7a333053610c08cd22e3ece",
+       "3c3dd805ed7065840f7d62581e8d2dc318d7fbb8",
+       "f42364ef9ce43d6669fc3083dfa448666ea0048c"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191", "INT-570"],
+     commits:
+      ["6c7aa7288a18e5b5847bb7aa344b8b5e6d8e93ed",
+       "215c9ca3d355a5a4628064174807d951c52518cb"],
+     translations: []},
+   "6.0.0.30" =>
+    {tasks: ["INT-570"],
+     commits:
+      ["64233ca5e3c0014e550f251da3bea95eefb27c1a",
+       "37d5a69811cc94f71516af27e5d48049ce9287b2",
+       "dff3f259bbbcbcf3847d26d561518447f4593380",
+       "9b35d916422e83cc8032d646e4745da8c43a3db0"],
+     translations: []}},
+ hex:
+  {"6.3.0.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["6c623eaf478fe2f4052fccce73d9590865c1ad22"],
+     translations: []},
+   "6.2.1.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["c5bacc4173c6414489d81f591ecd0b5e67038467"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["5e3b351a9c29c6a2e39bc208481ffa09d960bc34"],
+     translations: []}},
+ imprint:
+  {"6.3.0.3" =>
+    {tasks: ["ADM-3191"],
+     commits: ["ca51c1c77f238ffe6c4628000ac5b9e7c5b699db"],
+     translations: []},
+   "6.2.1.2" =>
+    {tasks: ["ADM-3191", "INT-570"],
+     commits:
+      ["ee27acb8a4086af3e454a28ebf404426946babc2",
+       "48705f4b2d3f34da2d640450b44d9c35e9a21dc3"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191", "INT-570"],
+     commits:
+      ["4c56a6867980f5cc903a463bd7b87a9024874ede",
+       "f81d4d5ba6409372acf4bcf5b93f8b439e63c65a"],
+     translations: []}},
+ hcd:
+  {"6.3.0.2" =>
+    {tasks: ["HCD-84", "ADM-3191"],
+     commits:
+      ["b7a77693332238c718c8c41abc8d9b37fede3612",
+       "76e5ec34361f9413b593c24179ecfc7c0ea7f68d"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191"],
+     commits:
+      ["9c355da05689ccdf5b0e9be545e6521579ccb045",
+       "a2a944a007aa6d4374a1a0192c13e2d23512b385"],
+     translations: []}},
+ homs:
+  {"2.8.17" =>
+    {tasks: ["HOMS-517", "INT-570"],
+     commits:
+      ["93490573a5c4471cf087667ea70287d1706b5689",
+       "dec1ab170d5e4d41a7d3061bcd30fbe9e2c5e852",
+       "18b556655e219328e8b526ad307f4d99c9ff4f29",
+       "f3e90ee1c5d6cdf5ec47cd092060ee7eafb6cef7"],
+     translations: []},
+   "2.7.22" =>
+    {tasks: [],
+     commits:
+      ["64c4466520609b75add2533048f5ff485fc26191",
+       "22d5336b62f352521ce278e5e64a7b79a1c4302b",
+       "075cf4c4dbe9da0a359f52fccaec42ca50d29a34",
+       "dbd6d7fc394896680461d79e9fbd316036f20d8b",
+       "a6b6b6c0393a66c500da483d33c94cafce9d438c"],
+     translations: []}},
+ "hydra-migration":
+  {"6.2.2" =>
+    {tasks: ["INT-570", "MIGR-421"],
+     commits:
+      ["63e4b8e20aecfbe49d4f83bd866666c9c5fb637d",
+       "ec1d398b03d5febe53d7420323d56e7e3d84d818",
+       "914326c4fad5399b0a3eba9f425b3a0603c36210",
+       "57e85197163fc136bff96488e3d4b3db57062579",
+       "caa5591eb5cb1c74b9b8e61b7897a36dc05e261e",
+       "6a56adcda85927fd8eeeaabb245c40921ab980f7",
+       "c1e766b7a55dc5fd26f4ad458813408f244c9f2a",
+       "68eede51ba4425ea05abfcb587b4c8283eb6b7d4"],
+     translations: []}},
+ "hydra-users-syncer":
+  {"6.3.0.2" =>
+    {tasks: ["ADM-3191", "INT-653"],
+     commits:
+      ["64e2ba2452ba447a470527680f6a2094ba4588ee",
+       "a2549a23ffa7beb7248242734aee1fbae2f66da3"],
+     translations: []},
+   "6.2.1.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["8df021189c28b695f32b53bbc746f8d78ee50e03"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191"],
+     commits: ["459ad9d7f24a2dea98c945b443091f765c160daa"],
+     translations: []},
+   "6.3" =>
+    {tasks: [],
+     commits:
+      ["96ad8e40744bbf95b898fee661901d3bea9629a8",
+       "32f87d081e0d2b46fc13fd02819923527d461c7f",
+       "162cf18fe76b33e5365bb2d5d90aab81b04a5dd5",
+       "cc8f77bee6fbf9cb2502fbe849b0e1d7c47d19c9",
+       "d97c847305bcb06a2dd8fbee31c5db36f132e530",
+       "43593d7c19f3a38b380f33642735925b957a2549"],
+     translations: []}},
+ "hydra-customer-connection-request":
+  {"6.3.0.3" =>
+    {tasks: ["ADM-3191"],
+     commits: ["302f214185701cfb0ccd0a6db077f3556106bdcb"],
+     translations: []},
+   "6.2.0.3" =>
+    {tasks: ["ADM-3191", "INT-570", "INT-653"],
+     commits:
+      ["619dbdcee1119649d9dc5f4bebccd472a8488e0c",
+       "d0f70985604a92d20ee9af596b5a2a2e224169e7",
+       "3fd9c1c9fdc6c76ca7af0c318110dd35030b19df"],
+     translations: []},
+   "6.2.0.4" =>
+    {tasks: ["ADM-3191"],
+     commits: ["c20c2213e85c806c4fc216479a8a784a0523bf18"],
+     translations: []}},
+ "hydra-messages-relay":
+  {"6.3.0.3" =>
+    {tasks: ["ADM-3191"],
+     commits:
+      ["4b0bab7cb1d7589d1ac0e5f69a98c449d7dc2d24",
+       "e4765ac409253adfce4db2171990da611395bc25"],
+     translations: []}},
+ "hydra-external-syncer":
+  {"6.3.0.2" =>
+    {tasks: ["ADM-3191"],
+     commits:
+      ["22c5373fb974ce9eabdc69a7a247d7f9bfe40271",
+       "7bc0c2f75c118124ebbc46fbb1512119b007b0f6"],
+     translations: []},
+   "6.2.1.2" =>
+    {tasks: ["ADM-3191", "ADM-3173"],
+     commits:
+      ["c45257f0a5640d75514d53ec78d54a7703677309",
+       "369bbeeb448f5381ad58aae34a33d793d932de60",
+       "9df7e778284be161acb7eb62bf087bdad544bdc4",
+       "bfdcaea5a1eeaae59e0dbef3646d90235a180519"],
+     translations: []},
+   "6.2.2" =>
+    {tasks: ["ADM-3191"],
+     commits:
+      ["ae8b977c3ba76f191cbb9c6ef4ae2423e3998db0",
+       "3a8657aa7e314aa0d062b41d32a1a52cc322e8c6"],
+     translations: []}}}

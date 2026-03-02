@@ -6,6 +6,7 @@ import html
 from .html import HtmlReportBuilder
 from .analyzer import GitHubWorkflowAnalyzer
 from .analyze import TestAnalysisResults
+from .json_report import build_repo_json_data
 
 
 class ReportService:
@@ -31,9 +32,12 @@ class ReportService:
         output_dir: Path,
         save_logs: bool,
         force_refresh_default: bool,
-    ) -> Optional[Path]:
+        generate_json: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Выполняет анализ репозитория и генерирует HTML-отчёт. Возвращает путь к отчёту или None.
+        Выполняет анализ репозитория и генерирует HTML-отчёт.
+
+        Returns dict with 'html_path' and optionally 'json_data', or None if no runs.
         """
         print(f"\n================= 📁 Репозиторий: {repo} =================")
 
@@ -257,6 +261,22 @@ class ReportService:
         print(f"   Починенные: {len(fixed_tests)}")
         print(f"   Нестабильные (flaky): {len(flaky_tests)}")
 
+        # JSON report data
+        json_data = None
+        if generate_json:
+            stable_since: Dict[str, Any] = {}
+            if stable_failing:
+                print("🔍 Ищем историю стабильно падающих тестов в MongoDB...")
+                branch_run_ids = self.analyzer.get_branch_run_ids(repo, branch)
+                stable_since = self.analyzer.artifact_cache.find_earliest_run_with_tests(
+                    self.owner, repo, list(stable_failing.keys()), branch_run_ids
+                )
+                print(f"📋 Найдена история для {len(stable_since)}/{len(stable_failing)} стабильно падающих тестов")
+            json_data = build_repo_json_data(
+                repo, branch, master_branch, results,
+                behavior_analysis, stats, all_test_details, stable_since
+            )
+
         # Генерация HTML
         html_builder.write()
-        return report_path
+        return {"html_path": report_path, "json_data": json_data}
