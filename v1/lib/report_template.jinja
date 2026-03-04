@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Отчёт по упавшим тестам - {{ repo_name }} ({{ branch_name }})</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .report-info {
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .report-info p {
+            margin: 5px 0;
+        }
+
+        /* Стили для секций run'ов */
+        .run-section {
+            margin: 20px 0;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .run-header {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 15px;
+        }
+        .run-header h3 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+        }
+        .run-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            font-size: 14px;
+        }
+        .run-meta span {
+            background: rgba(255,255,255,0.2);
+            padding: 4px 8px;
+            border-radius: 3px;
+        }
+        .run-meta a {
+            color: white;
+            text-decoration: none;
+        }
+        .run-meta a:hover {
+            text-decoration: underline;
+        }
+        .status-success {
+            background: rgba(76, 175, 80, 0.3) !important;
+        }
+        .status-failure {
+            background: rgba(244, 67, 54, 0.3) !important;
+        }
+        .run-content {
+            padding: 20px;
+            background: #fafafa;
+        }
+        .test-section {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            border-left: 4px solid #4CAF50;
+        }
+        .test-section h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+            font-size: 16px;
+        }
+        .no-tests {
+            color: #666;
+            font-style: italic;
+        }
+        .test-list {
+            margin: 10px 0;
+        }
+        .test-list li {
+            margin: 8px 0;
+            padding: 8px;
+            background: #f9f9f9;
+            border-radius: 3px;
+            border-left: 3px solid #4CAF50;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 4px 12px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .test-details {
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .test-details pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        details {
+            margin: 10px 0;
+        }
+        summary {
+            cursor: pointer;
+            font-weight: bold;
+            padding: 8px;
+            background-color: #f0f0f0;
+            border-radius: 3px;
+            margin-bottom: 5px;
+        }
+        summary:hover {
+            background-color: #e0e0e0;
+        }
+        ul {
+            margin: 10px 0;
+        }
+        li {
+            margin: 8px 0;
+            padding: 5px;
+            border-left: 3px solid #4CAF50;
+            padding-left: 10px;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+        hr {
+            border: 0;
+            height: 2px;
+            background: linear-gradient(to right, transparent, #ccc, transparent);
+            margin: 20px 0;
+        }
+        a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        p {
+            margin: 10px 0;
+        }
+
+        @media (max-width: 768px) {
+            .run-meta {
+                flex-direction: column;
+                gap: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+<h1>Отчёт по упавшим тестам</h1>
+<div class="report-info">
+    <p><strong>Репозиторий:</strong> {{ repo_name }}</p>
+    <p><strong>Ветка:</strong> {{ branch_name }}</p>
+    <p><strong>Дата генерации:</strong> {{ report_date }}</p>
+    <p><strong>Кэш:</strong> {{ cache_stats.total_cached }} артефактов ({{ cache_stats.total_size_mb }} МБ)</p>
+</div>
+
+{% macro render_tree(nodes) -%}
+<ul class="test-list test-tree">
+    {% for node in nodes %}
+    <li>
+        <strong>{{ node.name | e }}</strong> <span style="color:#666;">({{ node.total }})</span>
+        {% if node.children %}
+            {{ render_tree(node.children) }}
+        {% endif %}
+        {% if node.leaves %}
+        <ul class="test-list">
+            {% for leaf in node.leaves %}
+            <li>{{ leaf.item | safe }}
+                {% if leaf.clean_item in test_details %}
+                {% set detail_id = "details_" + range(1000000000, 9999999999) | random | string %}
+                <button data-test="{{ leaf.clean_item | e }}" onclick="toggleDetails(this.dataset.test, '{{ detail_id }}')">Подробно</button>
+                <div id="{{ detail_id }}" class="test-details" style="display: none;"></div>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{%- endmacro %}
+
+{% for run in runs %}
+<div class="run-section" {% if run.commit_info.composite_key is defined %}id="run-{{ run.commit_info.composite_key }}"{% elif run.commit_info.sha is defined %}id="run-{{ run.commit_info.sha }}"{% endif %}>
+    <div class="run-header">
+        <h3>🚀 {{ run.commit_info.title }}</h3>
+        <div class="run-meta">
+            <span class="run-branch">Ветка: <strong>{{ run.commit_info.branch }}</strong></span>
+            <span class="run-date">Дата: <strong>{{ run.commit_info.ts }}</strong></span>
+            <span class="run-status status-{{ run.commit_info.concl }}">Статус: <strong>{{ run.commit_info.concl }}</strong></span>
+            {% if run.commit_info.failed is defined %}
+            <span class="run-failed">Падает: <strong>{{ run.commit_info.failed }}</strong></span>
+            {% endif %}
+            <span class="run-link"><a href="{{ run.commit_info.link }}" target="_blank">🔗 Посмотреть в GitHub</a></span>
+        </div>
+    </div>
+    <div class="run-content">
+        {% for section in run.sections %}
+        <div class="test-section">
+            <h4>{{ section.title }} ({{ section.total }} шт.):</h4>
+            {% if section.total == 0 %}
+            <p class="no-tests">нет</p>
+            {% else %}
+            {% if section.total <= section.max_show %}
+            {{ render_tree(section.tree) }}
+            {% else %}
+            <details>
+                <summary>Показать/скрыть список</summary>
+                {{ render_tree(section.tree) }}
+            </details>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+<hr>
+{% endfor %}
+
+<script>
+var testDetails = {{ details_js_json | safe }};
+
+function toggleDetails(testPath, detailId) {
+    var detailDiv = document.getElementById(detailId);
+    if (detailDiv.style.display === 'none') {
+        var details = testDetails[testPath];
+        if (details) {
+            var formattedDetails = details.replace(/\\n/g, '\n');
+            detailDiv.innerHTML = '<pre>' + formattedDetails + '</pre>';
+            detailDiv.style.display = 'block';
+        } else {
+            detailDiv.innerHTML = '<p>Детали для теста ' + testPath + ' не найдены</p>';
+            detailDiv.style.display = 'block';
+        }
+    } else {
+        detailDiv.style.display = 'none';
+    }
+}
+
+function scrollToRun(runId) {
+    var el = document.getElementById(runId);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+</script>
+</body>
+</html>

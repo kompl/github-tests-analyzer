@@ -1,0 +1,35 @@
+github:
+  owner: "hydra-billing"
+  workflow_file: "ci.yml"
+
+mongo:
+  uri: "mongodb://root:example@localhost:27017"
+  db: "filedecorator_v2"
+  collection: "parsed_results"
+
+analysis:
+  master_branch: "master"
+  max_runs: 2
+  ignore_tasks:
+    - "ADM-3191"
+    - "INT-570"
+    - "INT-653"
+    - "ADM-3173"
+    - "MIGR-421"
+
+output:
+  dir: "downloaded_logs"
+  save_logs: false
+  force_refresh_cache: false
+  generate_json: true
+
+phases:
+#  - parse
+  - collect
+  - analyze
+  - enrich
+  - render
+
+input:
+  log_file: "1.log"
+  repo_branches_file: "repo_branches.json"
